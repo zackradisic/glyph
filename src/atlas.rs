@@ -37,6 +37,7 @@ pub struct Atlas {
     pub w: u32,
     pub h: u32,
     pub max_h: f32,
+    pub max_w: f32,
     pub glyphs: Vec<Glyph>,
 }
 
@@ -55,6 +56,8 @@ impl Atlas {
         let mut w: u32 = 0;
         let mut h: u32 = 0;
 
+        let mut max_w = 0u32;
+
         // Find minimum size for a texture holding all visible ASCII characters
         for i in 32..128 {
             face.load_char(i, freetype::face::LoadFlag::RENDER)
@@ -66,6 +69,8 @@ impl Atlas {
                 roww = 0;
                 rowh = 0;
             }
+
+            max_w = std::cmp::max(max_w, g.bitmap().width() as u32);
 
             roww += g.bitmap().width() as u32 + 1;
             rowh = std::cmp::max(rowh, g.bitmap().rows() as u32);
@@ -175,6 +180,7 @@ impl Atlas {
             h,
             glyphs,
             max_h,
+            max_w: max_w as f32,
         })
     }
 }

@@ -28,9 +28,9 @@ fn main() {
         gl::ClearColor(0.157, 0.157, 0.157, 1.0);
         gl::Clear(gl::COLOR_BUFFER_BIT);
     }
-    window.gl_swap_window();
 
     let mut editor_window = Window::new();
+    editor_window.queue_cursor();
     window.gl_swap_window();
 
     let mut event_pump = sdl_ctx.event_pump().unwrap();

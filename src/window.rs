@@ -1,4 +1,8 @@
-use std::{ffi::CString, mem, ptr::null};
+use std::{
+    ffi::{c_void, CString},
+    mem,
+    ptr::null,
+};
 
 use gl::types::{GLint, GLsizeiptr, GLuint, GLvoid};
 use ropey::RopeSlice;
@@ -10,7 +14,10 @@ use sdl2::{
     Sdl, VideoSubsystem,
 };
 
-use crate::{atlas::Atlas, Editor, EventResult, GLProgram, Shader, SCREEN_HEIGHT, SCREEN_WIDTH};
+use crate::{
+    atlas::Atlas, Editor, EditorEventResult, EventResult, GLProgram, Shader, SCREEN_HEIGHT,
+    SCREEN_WIDTH,
+};
 
 #[repr(C)]
 struct Point {
@@ -41,6 +48,7 @@ fn hex_to_rgba(hex: &str) -> [f32; 4] {
 pub struct Window {
     atlas: Atlas,
     text_shader: TextShaderProgram,
+    cursor_shader: CursorShaderProgram,
     editor: Editor,
 }
 
@@ -53,11 +61,12 @@ impl Window {
         let text_shader = TextShaderProgram::default();
         let atlas = Atlas::new(&mut face, 48, text_shader.uniform_tex).unwrap();
 
-        text_shader.set_used();
+        let cursor_shader = CursorShaderProgram::default();
 
         Self {
             atlas,
             text_shader,
+            cursor_shader,
             editor: Editor::new(),
         }
     }
@@ -71,26 +80,102 @@ impl Window {
                 ..
             } if keymod == Mod::LCTRLMOD => EventResult::Quit,
             _ => match self.editor.event(event) {
-                EventResult::Draw => {
+                EditorEventResult::DrawText => {
                     let slice = self.editor.text_all();
                     self.render_text(slice);
                     EventResult::Draw
                 }
-                r => r,
+                EditorEventResult::DrawCursor => {
+                    self.queue_cursor();
+                    EventResult::Draw
+                }
+                _ => EventResult::Nothing,
             },
+        }
+    }
+
+    pub fn queue_cursor(&self) {
+        let fg = hex_to_rgba("ebdbb2");
+        self.cursor_shader.set_used();
+        unsafe {
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            gl::BlendEquation(gl::FUNC_SUBTRACT);
+        }
+
+        let w = self.atlas.max_w * SX;
+        let real_h = self.atlas.max_h * SY;
+        let h = (self.atlas.max_h/*+ 5f32*/) * SY;
+
+        let x = (-1f32 + 8f32 * SX)
+            + (self.editor.cursor() as f32 * (w/*+ self.atlas.glyphs[35].advance_x * SX*/));
+        let y = ((1f32 - 50f32 * SY) + real_h) - (self.editor.line() as f32 * real_h);
+
+        let vertices = &[
+            // bottom left
+            x,
+            y - h,
+            0.0,
+            // top left
+            x,
+            y,
+            0.0,
+            // top right
+            x + w,
+            y,
+            0.0,
+            // bottom right
+            x + w,
+            y - h,
+            0.0,
+            // top right,
+            x + w,
+            y,
+            0.0,
+            // bottom leff
+            x,
+            y - h,
+            0.0,
+        ];
+
+        let mut vbo: GLuint = 0;
+        let attrib_ptr = self.cursor_shader.attribute_apos;
+        unsafe {
+            gl::GenBuffers(1, &mut vbo);
+            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+            gl::BlendEquation(gl::FUNC_ADD);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (vertices.len() * mem::size_of::<f32>()).try_into().unwrap(),
+                vertices.as_ptr() as *const c_void,
+                gl::DYNAMIC_DRAW,
+            );
+
+            gl::VertexAttribPointer(
+                attrib_ptr,
+                3,
+                gl::FLOAT,
+                gl::FALSE,
+                3 * mem::size_of::<f32>() as i32,
+                null(),
+            );
+            gl::EnableVertexAttribArray(0);
+            gl::DrawArrays(gl::TRIANGLES, 0, 6);
         }
     }
 
     fn render_text(&self, text: RopeSlice) {
         let fg = hex_to_rgba("ebdbb2");
+        self.text_shader.set_used();
         unsafe {
             gl::ClearColor(0.157, 0.157, 0.157, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
             gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            // gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             gl::Uniform4fv(self.text_shader.uniform_color, 1, fg.as_ptr() as *const f32);
         }
         self.queue_text(text, -1f32 + 8f32 * SX, 1f32 - 50f32 * SY, SX, SY);
+        self.queue_cursor();
     }
 
     fn queue_text(&self, text: RopeSlice, mut x: f32, mut y: f32, sx: f32, sy: f32) {
@@ -248,6 +333,46 @@ impl TextShaderProgram {
 }
 
 impl Default for TextShaderProgram {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct CursorShaderProgram {
+    program: GLProgram,
+    attribute_apos: GLuint,
+}
+
+impl CursorShaderProgram {
+    pub fn new() -> Self {
+        let shaders = vec![
+            Shader::from_source(
+                &CString::new(include_str!("../shaders/cursor.v.glsl")).unwrap(),
+                gl::VERTEX_SHADER,
+            )
+            .unwrap(),
+            Shader::from_source(
+                &CString::new(include_str!("../shaders/cursor.f.glsl")).unwrap(),
+                gl::FRAGMENT_SHADER,
+            )
+            .unwrap(),
+        ];
+
+        let program = GLProgram::from_shaders(&shaders).unwrap();
+
+        Self {
+            attribute_apos: program.attrib("aPos").unwrap() as u32,
+            program,
+        }
+    }
+
+    #[inline]
+    pub fn set_used(&self) {
+        self.program.set_used()
+    }
+}
+
+impl Default for CursorShaderProgram {
     fn default() -> Self {
         Self::new()
     }
