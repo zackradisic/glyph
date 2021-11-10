@@ -9,13 +9,13 @@ I think this is how Jamie's code works, so I'm not too worried about performance
 since just storing 4 additional RGBA values. We don't even need the precision of f32s, we can just make them 
 u8s too.
 
-# Cleaning
 
-## Swap window and clear and draw every frame
-I think gl::ClearColor and window.gl_swap_window() should be called every time, not only when we
-draw text. For example if we have a cursor and it moves, the window will have the previous cursor
-positions unless we clear window.
+# Cursor text actions
 
-This means we should cache the text and draw it only when we need to.
+* Cursor/backspace at start of line
+  * Should go to the previous line and delete the current line. In the case of the first line do nothing
 
-Apparently you can clear just a texture (see [here](https://stackoverflow.com/questions/35880814/how-to-blank-my-opengl-texture))
+* Cursor inserting not at end of line
+  * In between text should insert inbetween
+  * Beyond text should also work
+    * Currently doesn't because it doesn't add, so it spills over into next line

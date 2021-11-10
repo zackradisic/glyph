@@ -186,16 +186,17 @@ impl Window {
         self.cursor_shader.set_used();
         unsafe {
             gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            gl::BlendEquation(gl::FUNC_SUBTRACT);
+            // gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
+            // gl::BlendEquation(gl::FUNC_SUBTRACT);
         }
 
         let mut vbo: GLuint = 0;
         let attrib_ptr = self.cursor_shader.attribute_apos;
         unsafe {
             gl::GenBuffers(1, &mut vbo);
+            gl::BlendEquationi(vbo, gl::FUNC_SUBTRACT);
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::BlendEquation(gl::FUNC_ADD);
             gl::BufferData(
                 gl::ARRAY_BUFFER,
                 (18 * mem::size_of::<f32>()).try_into().unwrap(),
@@ -213,6 +214,7 @@ impl Window {
             );
             gl::EnableVertexAttribArray(0);
             gl::DrawArrays(gl::TRIANGLES, 0, 6);
+            gl::DisableVertexAttribArray(0);
         }
     }
 
