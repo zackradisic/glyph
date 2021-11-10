@@ -1,4 +1,6 @@
 use std::{
+    borrow::Borrow,
+    cell::Cell,
     ffi::{c_void, CString},
     mem,
     ptr::null,
@@ -30,6 +32,8 @@ struct Point {
 const SX: f32 = 0.5 / SCREEN_WIDTH as f32;
 const SY: f32 = 0.5 / SCREEN_HEIGHT as f32;
 
+const FG: [f32; 4] = [0.92156863, 0.85882354, 0.69803923, 1.0];
+
 fn hex_to_rgba(hex: &str) -> [f32; 4] {
     let mut rgba = [0.0, 0.0, 0.0, 1.0];
     let hex = hex.trim_start_matches('#');
@@ -50,6 +54,8 @@ pub struct Window {
     text_shader: TextShaderProgram,
     cursor_shader: CursorShaderProgram,
     editor: Editor,
+    text_coords: Cell<Vec<Point>>,
+    cursor_coords: Cell<Vec<f32>>,
 }
 
 impl Window {
@@ -68,6 +74,8 @@ impl Window {
             text_shader,
             cursor_shader,
             editor: Editor::new(),
+            text_coords: Cell::new(Vec::new()),
+            cursor_coords: Cell::new(Vec::new()),
         }
     }
 
@@ -95,14 +103,6 @@ impl Window {
     }
 
     pub fn queue_cursor(&self) {
-        let fg = hex_to_rgba("ebdbb2");
-        self.cursor_shader.set_used();
-        unsafe {
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            gl::BlendEquation(gl::FUNC_SUBTRACT);
-        }
-
         let w = self.atlas.max_w * SX;
         let real_h = self.atlas.max_h * SY;
         let h = (self.atlas.max_h/*+ 5f32*/) * SY;
@@ -111,7 +111,7 @@ impl Window {
             + (self.editor.cursor() as f32 * (w/*+ self.atlas.glyphs[35].advance_x * SX*/));
         let y = ((1f32 - 50f32 * SY) + real_h) - (self.editor.line() as f32 * real_h);
 
-        let vertices = &[
+        self.cursor_coords.replace(vec![
             // bottom left
             x,
             y - h,
@@ -136,7 +136,59 @@ impl Window {
             x,
             y - h,
             0.0,
-        ];
+        ]);
+    }
+
+    fn render_text(&self, text: RopeSlice) {
+        self.queue_cursor();
+        self.queue_text(text, -1f32 + 8f32 * SX, 1f32 - 50f32 * SY, SX, SY);
+    }
+
+    pub fn frame(&self) {
+        self.text_shader.set_used();
+
+        // Draw text
+        unsafe {
+            gl::Uniform4fv(self.text_shader.uniform_color, 1, FG.as_ptr() as *const f32);
+
+            // Use the texture containing the atlas
+            gl::BindTexture(gl::TEXTURE_2D, self.atlas.tex);
+            gl::Uniform1i(self.text_shader.uniform_tex, 0);
+
+            // Set up the VBO for our vertex data
+            gl::EnableVertexAttribArray(self.text_shader.attribute_coord);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.text_shader.vbo);
+
+            gl::VertexAttribPointer(
+                self.text_shader.attribute_coord,
+                4,
+                gl::FLOAT,
+                gl::FALSE,
+                0,
+                null(),
+            );
+
+            // Can't find any methods to get &T from Cell<T>, so just use
+            // `.as_ptr()` to get data and not require &mut self receiver
+            let text_cords = self.text_coords.as_ptr();
+
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                ((*text_cords).len() * mem::size_of::<Point>()) as GLsizeiptr,
+                (*text_cords).as_ptr() as *const GLvoid,
+                gl::DYNAMIC_DRAW,
+            );
+            gl::DrawArrays(gl::TRIANGLES, 0, (*text_cords).len() as i32);
+            gl::DisableVertexAttribArray(self.text_shader.attribute_coord);
+        }
+
+        // Draw cursor
+        self.cursor_shader.set_used();
+        unsafe {
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            gl::BlendEquation(gl::FUNC_SUBTRACT);
+        }
 
         let mut vbo: GLuint = 0;
         let attrib_ptr = self.cursor_shader.attribute_apos;
@@ -146,8 +198,8 @@ impl Window {
             gl::BlendEquation(gl::FUNC_ADD);
             gl::BufferData(
                 gl::ARRAY_BUFFER,
-                (vertices.len() * mem::size_of::<f32>()).try_into().unwrap(),
-                vertices.as_ptr() as *const c_void,
+                (18 * mem::size_of::<f32>()).try_into().unwrap(),
+                (*self.cursor_coords.as_ptr()).as_ptr() as *const c_void,
                 gl::DYNAMIC_DRAW,
             );
 
@@ -164,43 +216,10 @@ impl Window {
         }
     }
 
-    fn render_text(&self, text: RopeSlice) {
-        let fg = hex_to_rgba("ebdbb2");
-        self.text_shader.set_used();
-        unsafe {
-            gl::ClearColor(0.157, 0.157, 0.157, 1.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
-            gl::Enable(gl::BLEND);
-            // gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            gl::Uniform4fv(self.text_shader.uniform_color, 1, fg.as_ptr() as *const f32);
-        }
-        self.queue_text(text, -1f32 + 8f32 * SX, 1f32 - 50f32 * SY, SX, SY);
-        self.queue_cursor();
-    }
-
     fn queue_text(&self, text: RopeSlice, mut x: f32, mut y: f32, sx: f32, sy: f32) {
         let starting_x = x;
-        unsafe {
-            // Use the texture containing the atlas
-            gl::BindTexture(gl::TEXTURE_2D, self.atlas.tex);
-            gl::Uniform1i(self.text_shader.uniform_tex, 0);
-
-            // Set up the VBO for our vertex data
-            gl::EnableVertexAttribArray(self.text_shader.attribute_coord);
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.text_shader.vbo);
-            gl::VertexAttribPointer(
-                self.text_shader.attribute_coord,
-                4,
-                gl::FLOAT,
-                gl::FALSE,
-                0,
-                null(),
-            );
-        }
-
         // TODO: Cache this
         let mut coords: Vec<Point> = Vec::with_capacity(6 * text.len_chars());
-        // let mut coords: Vec<Point> = Vec::with_capacity(6 * text.len());
 
         for ch in text.chars() {
             let c = ch as usize;
@@ -267,17 +286,9 @@ impl Window {
             });
         }
 
-        unsafe {
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (coords.len() * mem::size_of::<Point>()) as GLsizeiptr,
-                coords.as_ptr() as *const GLvoid,
-                gl::DYNAMIC_DRAW,
-            );
-            gl::DrawArrays(gl::TRIANGLES, 0, coords.len() as i32);
-
-            gl::DisableVertexAttribArray(self.text_shader.attribute_coord);
-        }
+        // TODO: It's probably faster to directly mutate the vec instead of making a
+        // new one and replacing it
+        self.text_coords.set(coords);
     }
 }
 

@@ -40,6 +40,39 @@ impl Editor {
     pub fn event(&mut self, event: Event) -> EditorEventResult {
         match event {
             Event::KeyDown {
+                keycode: Some(Keycode::K),
+                ..
+            } => {
+                if let Mode::Normal = self.mode {
+                    self.line -= 1;
+                    EditorEventResult::DrawCursor
+                } else {
+                    EditorEventResult::Nothing
+                }
+            }
+            Event::KeyDown {
+                keycode: Some(Keycode::J),
+                ..
+            } => {
+                if let Mode::Normal = self.mode {
+                    self.line += 1;
+                    EditorEventResult::DrawCursor
+                } else {
+                    EditorEventResult::Nothing
+                }
+            }
+            Event::KeyDown {
+                keycode: Some(Keycode::L),
+                ..
+            } => {
+                if let Mode::Normal = self.mode {
+                    self.cursor += 1;
+                    EditorEventResult::DrawCursor
+                } else {
+                    EditorEventResult::Nothing
+                }
+            }
+            Event::KeyDown {
                 keycode: Some(Keycode::H),
                 ..
             } => {
@@ -83,6 +116,9 @@ impl Editor {
                     self.cursor += text.len();
                     EditorEventResult::DrawText
                 } else {
+                    if text == "i" {
+                        self.mode = Mode::Insert
+                    }
                     EditorEventResult::Nothing
                 }
             }
