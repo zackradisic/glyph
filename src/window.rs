@@ -1,5 +1,4 @@
 use std::{
-    borrow::Borrow,
     cell::Cell,
     ffi::{c_void, CString},
     mem,
@@ -11,9 +10,6 @@ use ropey::RopeSlice;
 use sdl2::{
     event::Event,
     keyboard::{Keycode, Mod},
-    video::GLContext,
-    video::Window as SdlWindow,
-    Sdl, VideoSubsystem,
 };
 
 use crate::{
