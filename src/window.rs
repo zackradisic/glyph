@@ -1,16 +1,13 @@
 use std::{
-    cell::Cell,
     ffi::{c_void, CString},
     mem,
     ptr::null,
 };
 
-use gl::types::{GLfloat, GLint, GLsizeiptr, GLuint, GLvoid};
-use ropey::RopeSlice;
+use gl::types::{GLint, GLsizeiptr, GLuint, GLvoid};
 use sdl2::{
     event::Event,
     keyboard::{Keycode, Mod},
-    mouse::MouseWheelDirection,
 };
 
 use crate::{
@@ -262,8 +259,10 @@ impl Window {
         unsafe {
             gl::GenBuffers(1, &mut vbo);
             gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
-            gl::BlendFunci(1, gl::SRC_ALPHA, gl::ONE);
-            gl::BlendEquationi(1, gl::FUNC_SUBTRACT);
+
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
+            gl::BlendEquation(gl::FUNC_SUBTRACT);
+
             gl::BufferData(
                 gl::ARRAY_BUFFER,
                 (18 * mem::size_of::<f32>()).try_into().unwrap(),
@@ -282,6 +281,10 @@ impl Window {
             gl::EnableVertexAttribArray(0);
             gl::DrawArrays(gl::TRIANGLES, 0, 6);
             gl::DisableVertexAttribArray(0);
+
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            gl::BlendEquation(gl::FUNC_ADD);
         }
     }
 
