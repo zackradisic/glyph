@@ -1,12 +1,11 @@
 # Features
 
-## Scrolling
-The main design decision here is how granular we want the scrolling to be. If we
-want it to be on a line/char basis, then it is pretty simple because then we can
-just write code to skip lines/columns in the main text render loop.
+## Subtractive color blending for cursor / using vertex array objects
+Right now when the cursor is over a glyph, it completely overwrites the glyph's color, unlike editors like vim and vscode, where the cursor is blended with the glyph's color using subtractive color blending. This allows you to still see the glyph under the cursor.
 
-If we want more smoother scrolling, then we need to perform x and y translations
-on the vertex shader
+I tried using some OpenGL APIs to achieve this, but I think we're using a legacy version
+that doesn't support this. To upgrade to the old APIs we have to change shaders and 
+we have to use Vertex Array Objects or they won't draw.
 
 ## Color/Syntax highlighting
 Probably requires us to input the RGBA colors for each character along with vertex information.

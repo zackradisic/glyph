@@ -10,7 +10,8 @@ pub enum EditorEventResult {
     DrawCursor,
 }
 
-enum Mode {
+#[derive(Copy, Clone)]
+pub enum Mode {
     Insert,
     Normal,
 }
@@ -222,7 +223,7 @@ impl Editor {
         if self.lines.len() > 1 {
             let len =
                 // Include new line character, except if we one the last line which doesn't have it
-                if line == (self.lines.len() - 1) { println!("HI");0 } else { 1 } + self.lines.remove(line);
+                if line == (self.lines.len() - 1) { 0 } else { 1 } + self.lines.remove(line);
 
             self.text.remove(pos..(pos + len as usize))
         } else {
@@ -379,6 +380,11 @@ impl Editor {
                 .iter()
                 .fold(0, |acc, line| acc + 1 + *line as usize)
         }
+    }
+
+    #[inline]
+    pub fn is_insert(&self) -> bool {
+        matches!(self.mode, Mode::Insert)
     }
 }
 

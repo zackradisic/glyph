@@ -1,8 +1,16 @@
 use core::time;
+use std::ffi::CStr;
 
 use glyph::{EventResult, Window, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 fn main() {
+    #[cfg(debug_assertions)]
+    let filepath_idx = 2;
+    #[cfg(not(debug_assertions))]
+    let filepath_idx = 1;
+
+    let filepath = std::env::args().nth(filepath_idx);
+
     let sdl_ctx = sdl2::init().unwrap();
     let video_subsystem = sdl_ctx.video().unwrap();
     let timer = sdl_ctx.timer().unwrap();
@@ -22,6 +30,15 @@ fn main() {
 
     let _gl_ctx = window.gl_create_context().unwrap();
     gl::load_with(|s| video_subsystem.gl_get_proc_address(s) as *const std::os::raw::c_void);
+
+    // unsafe {
+    //     println!(
+    //         "version: {}",
+    //         CStr::from_ptr(gl::GetString(gl::VERSION) as *const i8)
+    //             .to_str()
+    //             .unwrap()
+    //     );
+    // }
 
     // Set background
     unsafe {
@@ -54,13 +71,13 @@ fn main() {
         }
 
         for event in event_pump.poll_iter() {
-            match editor_window.event(event) {
+            match editor_window.event(event, timer.ticks()) {
                 EventResult::Quit => break 'running,
                 EventResult::Draw | EventResult::Nothing => {}
             }
         }
 
-        editor_window.frame();
+        editor_window.frame(timer.ticks());
         window.gl_swap_window();
 
         end = timer.performance_counter();
