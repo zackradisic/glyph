@@ -8,6 +8,7 @@ mod atlas;
 mod constants;
 mod editor;
 mod gl_program;
+mod vim;
 mod window;
 
 pub enum EventResult {
