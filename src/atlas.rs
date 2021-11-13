@@ -41,6 +41,8 @@ pub struct Atlas {
     pub glyphs: Vec<Glyph>,
 }
 
+const CHAR_END: usize = 128;
+
 impl Atlas {
     pub fn new(face: &mut Face, height: u32, uniform_tex: GLint) -> Result<Self, String> {
         let mut tex: GLuint = 0;
@@ -49,7 +51,7 @@ impl Atlas {
 
         let g = face.glyph();
 
-        let mut glyphs: Vec<Glyph> = vec![Default::default(); 128];
+        let mut glyphs: Vec<Glyph> = vec![Default::default(); CHAR_END];
 
         let mut roww: u32 = 0;
         let mut rowh: u32 = 0;
@@ -59,7 +61,7 @@ impl Atlas {
         let mut max_w = 0u32;
 
         // Find minimum size for a texture holding all visible ASCII characters
-        for i in 32..128 {
+        for i in 32..CHAR_END {
             face.load_char(i, freetype::face::LoadFlag::RENDER)
                 .map_err(|e| e.to_string())?;
 
@@ -126,7 +128,7 @@ impl Atlas {
 
         rowh = 0;
 
-        for i in 32..128 {
+        for i in 32..CHAR_END {
             face.load_char(i, freetype::face::LoadFlag::RENDER)
                 .map_err(|e| e.to_string())?;
 

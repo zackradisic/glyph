@@ -1,11 +1,8 @@
 # Features
 
-## Subtractive color blending for cursor / using vertex array objects
-Right now when the cursor is over a glyph, it completely overwrites the glyph's color, unlike editors like vim and vscode, where the cursor is blended with the glyph's color using subtractive color blending. This allows you to still see the glyph under the cursor.
-
-I tried using some OpenGL APIs to achieve this, but I think we're using a legacy version
-that doesn't support this. To upgrade to the old APIs we have to change shaders and 
-we have to use Vertex Array Objects or they won't draw.
+## Resizing
+Seems simple enough, handle the SDL event and capture the updated size. Use this to
+update the global variables
 
 ## Color/Syntax highlighting
 Probably requires us to input the RGBA colors for each character along with vertex information.

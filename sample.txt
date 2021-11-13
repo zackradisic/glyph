@@ -1,0 +1,24 @@
+The infinite monkey theorem states that a monkey hitting keys at random on a typewriter keyboard for an 
+infinite amount of time will almost surely type any given text, such as the complete works of William Shakespeare. 
+
+In fact, the monkey would almost surely type every possible finite text an infinite number of times. 
+
+However, the probability that monkeys filling the entire observable universe would type a single complete work, 
+such as Shakespeare's Hamlet, is so tiny that the chance of it occurring during a period of time hundreds of 
+thousands of orders of magnitude longer than the age of the universe is extremely low (but technically not zero). 
+
+The theorem can be generalized to state that any sequence of events which has a non-zero probability of happening, 
+at least as long as it hasn't occurred, will almost certainly eventually occur.
+
+In this context, "almost surely" is a mathematical term meaning the event happens with probability 1, and 
+the "monkey" is not an actual monkey, but a metaphor for an abstract device that produces an endless random 
+sequence of letters and symbols. One of the earliest instances of the use of the "monkey metaphor" is that of 
+French mathematician Emile Borel in 1913, but the first instance may have been even earlier.
+
+Variants of the theorem include multiple and even infinitely many typists, and the target text varies between 
+an entire library and a single sentence. Jorge Luis Borges traced the history of this idea from 
+Aristotle's On Generation and Corruption and Cicero's De Natura Deorum (On the Nature of the Gods), through 
+Blaise Pascal and Jonathan Swift, up to modern statements with their iconic simians and typewriters. 
+
+In the early 20th century, Borel and Arthur Eddington used the theorem to illustrate the timescales implicit in 
+the foundations of statistical mechanics.

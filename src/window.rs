@@ -23,8 +23,8 @@ struct Point {
     t: f32,
 }
 
-const SX: f32 = 0.5 / SCREEN_WIDTH as f32;
-const SY: f32 = 0.5 / SCREEN_HEIGHT as f32;
+const SX: f32 = 1.0 / SCREEN_WIDTH as f32;
+const SY: f32 = 1.0 / SCREEN_HEIGHT as f32;
 
 const FG: [f32; 4] = [0.92156863, 0.85882354, 0.69803923, 1.0];
 
@@ -59,7 +59,7 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new() -> Window {
+    pub fn new(initial_text: Option<String>) -> Window {
         let font_path = "./fonts/FiraCode.ttf";
         let ft_lib = freetype::Library::init().unwrap();
         let mut face = ft_lib.new_face(font_path, 0).unwrap();
@@ -73,7 +73,7 @@ impl Window {
             atlas,
             text_shader,
             cursor_shader,
-            editor: Editor::new(),
+            editor: Editor::with_text(initial_text),
             text_coords: Vec::new(),
             cursor_coords: Vec::new(),
             y_offset: 0.0,
@@ -197,7 +197,7 @@ impl Window {
         ];
     }
 
-    fn render_text(&mut self) {
+    pub fn render_text(&mut self) {
         self.queue_cursor();
         self.queue_text(-1f32 + 8f32 * SX, 1f32 - 50f32 * SY, SX, SY);
     }
@@ -372,12 +372,6 @@ impl Window {
         self.text_coords = coords;
         self.text_height = text_height;
         self.text_width = self.text_width.max(line_width);
-    }
-}
-
-impl Default for Window {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

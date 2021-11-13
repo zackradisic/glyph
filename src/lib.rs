@@ -15,3 +15,20 @@ pub enum EventResult {
     Draw,
     Quit,
 }
+
+#[derive(Debug, PartialEq)]
+pub enum EditorEventResult {
+    Nothing,
+    DrawText,
+    DrawCursor,
+}
+
+pub enum EditorAction {
+    Up(u32),
+    Down(u32),
+    Delete(Delete),
+}
+
+pub enum Delete {
+    Line(u32),
+}

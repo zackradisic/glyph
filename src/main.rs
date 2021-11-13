@@ -1,5 +1,5 @@
 use core::time;
-use std::ffi::CStr;
+use std::{ffi::CStr, fs};
 
 use glyph::{EventResult, Window, SCREEN_HEIGHT, SCREEN_WIDTH};
 
@@ -9,7 +9,9 @@ fn main() {
     #[cfg(not(debug_assertions))]
     let filepath_idx = 1;
 
-    let filepath = std::env::args().nth(filepath_idx);
+    let filepath = std::env::args()
+        .nth(filepath_idx)
+        .map(|path| fs::read_to_string(path).unwrap());
 
     let sdl_ctx = sdl2::init().unwrap();
     let video_subsystem = sdl_ctx.video().unwrap();
@@ -31,14 +33,14 @@ fn main() {
     let _gl_ctx = window.gl_create_context().unwrap();
     gl::load_with(|s| video_subsystem.gl_get_proc_address(s) as *const std::os::raw::c_void);
 
-    // unsafe {
-    //     println!(
-    //         "version: {}",
-    //         CStr::from_ptr(gl::GetString(gl::VERSION) as *const i8)
-    //             .to_str()
-    //             .unwrap()
-    //     );
-    // }
+    unsafe {
+        println!(
+            "OpenGL version: {}",
+            CStr::from_ptr(gl::GetString(gl::VERSION) as *const i8)
+                .to_str()
+                .unwrap()
+        );
+    }
 
     // Set background
     unsafe {
@@ -49,8 +51,8 @@ fn main() {
         gl::Clear(gl::COLOR_BUFFER_BIT);
     }
 
-    let mut editor_window = Window::new();
-    editor_window.queue_cursor();
+    let mut editor_window = Window::new(filepath);
+    editor_window.render_text();
     window.gl_swap_window();
 
     let mut event_pump = sdl_ctx.event_pump().unwrap();

@@ -3,12 +3,7 @@ use std::ops::Range;
 use ropey::{Rope, RopeSlice};
 use sdl2::{event::Event, keyboard::Keycode};
 
-#[derive(Debug, PartialEq)]
-pub enum EditorEventResult {
-    Nothing,
-    DrawText,
-    DrawCursor,
-}
+use crate::EditorEventResult;
 
 #[derive(Copy, Clone)]
 pub enum Mode {
@@ -16,8 +11,13 @@ pub enum Mode {
     Normal,
 }
 
-enum Cmd {
+/// CmdItem contains operators and operands for Vim commands
+#[derive(Copy, Clone)]
+enum CmdItem {
     Delete,
+    Change,
+    Find(bool),
+    Char(char),
 }
 
 enum Movement {
@@ -35,29 +35,61 @@ pub struct Editor {
     lines: Vec<u32>,
     text: Rope,
     mode: Mode,
-    cmd_stack: Vec<Cmd>,
+    cmd_stack: Vec<CmdItem>,
+}
+
+fn text_to_lines(text: &str) -> Vec<u32> {
+    let mut lines = Vec::new();
+
+    let mut count = 0;
+    let mut last = 'a';
+    for c in text.chars() {
+        last = c;
+        if c == '\n' {
+            lines.push(count);
+            count = 0;
+        } else {
+            count += 1;
+        }
+    }
+
+    if last != '\n' {
+        lines.push(count);
+    } else {
+        lines.push(0);
+    }
+
+    lines
 }
 
 impl Editor {
-    pub fn new() -> Self {
+    pub fn with_text(initial_text: Option<String>) -> Self {
+        let (lines, text) = match initial_text {
+            Some(text) => (text_to_lines(&text), Rope::from_str(&text)),
+            None => (vec![0], Rope::new()),
+        };
         Self {
             cursor: 0,
-            lines: vec![0],
+            lines,
             line: 0,
-            text: Rope::new(),
+            text,
             mode: Mode::Insert,
             cmd_stack: Vec::with_capacity(3),
         }
     }
 
+    pub fn new() -> Self {
+        Editor::with_text(None)
+    }
+
     pub fn event(&mut self, event: Event) -> EditorEventResult {
-        println!(
-            "Abs={} Cursor={} Line={} Lines={:?}",
-            self.pos(),
-            self.cursor,
-            self.line,
-            self.lines
-        );
+        // println!(
+        //     "Abs={} Cursor={} Line={} Lines={:?}",
+        //     self.pos(),
+        //     self.cursor,
+        //     self.line,
+        //     self.lines
+        // );
         match self.mode {
             Mode::Normal => match event {
                 Event::KeyDown {
@@ -101,17 +133,8 @@ impl Editor {
                 // process 'i' and add it to text
                 Event::TextInput { text, .. } => {
                     match text.as_str() {
-                        "i" => self.mode = Mode::Insert,
-                        "$" => {
-                            self.cursor = self.lines[self.line] as usize - 1;
-                            return EditorEventResult::DrawCursor;
-                        }
-                        "d" => {
-                            self.cmd_stack.push(Cmd::Delete);
-                            return self.handle_cmd();
-                        }
-                        "o" => {
-                            self.new_line();
+                        "A" => {
+                            self.right(Movement::Absolute(self.lines[self.line] as usize));
                             self.mode = Mode::Insert;
                             return EditorEventResult::DrawText;
                         }
@@ -120,10 +143,32 @@ impl Editor {
                             self.mode = Mode::Insert;
                             return EditorEventResult::DrawText;
                         }
-                        "A" => {
-                            self.right(Movement::Absolute(self.lines[self.line] as usize));
+                        "c" => {
+                            self.cmd_stack.push(CmdItem::Change);
+                            return self.handle_cmd();
+                        }
+                        "d" => {
+                            self.cmd_stack.push(CmdItem::Delete);
+                            return self.handle_cmd();
+                        }
+                        "f" => {
+                            self.cmd_stack.push(CmdItem::Find(true));
+                            return self.handle_cmd();
+                        }
+                        "i" => self.mode = Mode::Insert,
+                        "o" => {
+                            self.new_line();
                             self.mode = Mode::Insert;
                             return EditorEventResult::DrawText;
+                        }
+                        "$" => {
+                            self.cursor = self.lines[self.line] as usize - 1;
+                            return EditorEventResult::DrawCursor;
+                        }
+                        s if s.chars().next().unwrap().is_alphabetic() => {
+                            self.cmd_stack
+                                .push(CmdItem::Char(s.chars().next().unwrap()));
+                            return self.handle_cmd();
                         }
                         _ => {}
                     }
@@ -164,18 +209,53 @@ impl Editor {
     }
 
     fn handle_cmd(&mut self) -> EditorEventResult {
-        match self.cmd_stack.last() {
-            Some(Cmd::Delete) if self.cmd_stack.len() > 1 => {
+        match self.cmd_stack.last().cloned() {
+            Some(CmdItem::Find(forwards)) if self.cmd_stack.len() > 1 => {
+                self.cmd_stack.pop();
+                match self.cmd_stack.last().cloned() {
+                    Some(CmdItem::Char(c)) => {
+                        self.cmd_stack.pop();
+                        if let Some(idx) = self.find_line(c, forwards) {
+                            self.cursor = idx;
+                        }
+                        EditorEventResult::DrawCursor
+                    }
+                    Some(_) => {
+                        self.cmd_stack.pop();
+                        EditorEventResult::Nothing
+                    }
+                    None => unreachable!("We checked the stack had at least 2 cmds"),
+                }
+            }
+            Some(CmdItem::Delete) if self.cmd_stack.len() > 1 => {
                 self.cmd_stack.pop();
                 match self.cmd_stack.last() {
-                    Some(Cmd::Delete) => {
+                    Some(CmdItem::Delete) => {
                         self.cmd_stack.pop();
-                        // TODO: We should emulate vim behaviour here,
-                        // if we are on last line move cursor up
                         self.delete_line(self.line);
                         EditorEventResult::DrawText
                     }
-                    _ => unreachable!("We checked the vec had at least 2 cmds"),
+                    Some(_) => {
+                        self.cmd_stack.pop();
+                        EditorEventResult::Nothing
+                    }
+                    None => unreachable!("We checked the vec had at least 2 cmds"),
+                }
+            }
+            Some(CmdItem::Change) if self.cmd_stack.len() > 1 => {
+                self.cmd_stack.pop();
+                match self.cmd_stack.last() {
+                    Some(CmdItem::Change) => {
+                        self.cmd_stack.pop();
+                        self.delete_line(self.line);
+                        self.mode = Mode::Insert;
+                        EditorEventResult::DrawText
+                    }
+                    Some(_) => {
+                        self.cmd_stack.pop();
+                        EditorEventResult::Nothing
+                    }
+                    None => unreachable!("We checked the vec had at least 2 cmds"),
                 }
             }
             _ => EditorEventResult::Nothing,
@@ -271,6 +351,27 @@ impl Editor {
 
 // This impl contains movement utilities
 impl Editor {
+    #[inline]
+    fn find_line(&mut self, char: char, forwards: bool) -> Option<usize> {
+        if forwards {
+            self.text
+                .line(self.line)
+                .chars()
+                .skip(self.cursor)
+                .enumerate()
+                .find(|(_, c)| *c == char)
+                .map(|tup| tup.0)
+        } else {
+            let mut chars = self.text.line(self.line).chars();
+            chars.reverse();
+            chars
+                .skip(self.cursor)
+                .enumerate()
+                .find(|(_, c)| *c == char)
+                .map(|tup| tup.0)
+        }
+    }
+
     #[inline]
     fn up(&mut self, count: usize) {
         if count > self.line {
@@ -397,6 +498,40 @@ impl Default for Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(test)]
+    mod text_to_lines {
+        use super::*;
+
+        #[test]
+        fn empty_line() {
+            assert_eq!(vec![0], text_to_lines(""));
+        }
+
+        #[test]
+        fn single_line() {
+            let text = "one line";
+            assert_eq!(vec![text.len() as u32], text_to_lines(text));
+        }
+
+        #[test]
+        fn multiple_lines() {
+            let text = "line 1\nline 2";
+            assert_eq!(vec![6, 6], text_to_lines(text));
+        }
+
+        #[test]
+        fn trailing_newline() {
+            let text = "line 1\n";
+            assert_eq!(vec![6, 0], text_to_lines(text));
+        }
+
+        #[test]
+        fn leading_newline() {
+            let text = "\nline 1\n";
+            assert_eq!(vec![0, 6, 0], text_to_lines(text));
+        }
+    }
 
     #[cfg(test)]
     mod movement {
