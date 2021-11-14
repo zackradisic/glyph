@@ -76,6 +76,7 @@ fn digits_to_num(digits: Vec<u16>) -> u16 {
 pub struct Vim {
     cmd_stack: Vec<Token>,
     parsing_find: bool,
+    parsing_start: bool,
     parse_idx: usize,
 }
 
@@ -84,6 +85,7 @@ impl Vim {
         Self {
             cmd_stack: Vec::new(),
             parsing_find: false,
+            parsing_start: false,
             parse_idx: 0,
         }
     }
@@ -108,7 +110,14 @@ impl Vim {
                 _ => {}
             },
             Event::TextInput { text, .. } => {
-                if self.parsing_find {
+                if self.parsing_start {
+                    if text.as_str() == "g" {
+                        self.cmd_stack.push(Token::Start);
+                        self.parsing_start = false;
+                    } else {
+                        self.reset();
+                    }
+                } else if self.parsing_find {
                     self.cmd_stack
                         .push(Token::Char(text.chars().next().unwrap()));
                     self.parsing_find = false;
@@ -123,6 +132,9 @@ impl Vim {
                             self.parsing_find = true
                         }
                         // Movement
+                        "g" => {
+                            self.parsing_start = true;
+                        }
                         "G" => self.cmd_stack.push(Token::End),
                         "A" => return Some(Cmd::SwitchMove(Move::LineEnd)),
                         "a" => return Some(Cmd::SwitchMove(Move::Right)),
@@ -173,7 +185,7 @@ impl Vim {
             _ => {}
         };
 
-        if self.cmd_stack.is_empty() {
+        if self.cmd_stack.is_empty() || self.parsing_start {
             return None;
         }
 
@@ -214,15 +226,10 @@ impl Vim {
                     Err(FailAction::Continue)
                 }
             }
-            Some(Token::Up) => Ok(Cmd::Move(Move::Up)),
-            Some(Token::Down) => Ok(Cmd::Move(Move::Down)),
-            Some(Token::Left) => Ok(Cmd::Move(Move::Left)),
-            Some(Token::Right) => Ok(Cmd::Move(Move::Right)),
-            Some(Token::LineEnd) => Ok(Cmd::Move(Move::LineEnd)),
-            Some(Token::LineStart) => Ok(Cmd::Move(Move::LineStart)),
-            Some(Token::ParagraphBegin) => Ok(Cmd::Move(Move::ParagraphBegin)),
-            Some(Token::ParagraphEnd) => Ok(Cmd::Move(Move::ParagraphEnd)),
-            r => Err(FailAction::Reset),
+            _ => {
+                self.back();
+                Ok(Cmd::Move(self.parse_move()?))
+            }
         }
     }
 
@@ -246,6 +253,10 @@ impl Vim {
             Some(Token::Right) => Ok(Move::Right),
             Some(Token::LineEnd) => Ok(Move::LineEnd),
             Some(Token::LineStart) => Ok(Move::LineStart),
+            Some(Token::ParagraphBegin) => Ok(Move::ParagraphBegin),
+            Some(Token::ParagraphEnd) => Ok(Move::ParagraphEnd),
+            Some(Token::Start) => Ok(Move::Start),
+            Some(Token::End) => Ok(Move::End),
             Some(Token::Find) => match self.next() {
                 Some(Token::Char(char)) => Ok(Move::Find(*char)),
                 Some(_) => Err(FailAction::Reset),
@@ -261,6 +272,7 @@ impl Vim {
 
     #[inline]
     fn reset(&mut self) {
+        self.parsing_start = false;
         self.parsing_find = false;
         self.parse_idx = 0;
         self.cmd_stack.clear();
@@ -402,10 +414,7 @@ mod tests {
             assert_eq!(vim.event(keydown(Keycode::L)), Some(Cmd::Move(Move::Right)));
             is_reset(&mut vim);
 
-            assert_eq!(
-                vim.event(keydown(Keycode::Kp0)),
-                Some(Cmd::Move(Move::LineStart))
-            );
+            assert_eq!(vim.event(text_input("0")), Some(Cmd::Move(Move::LineStart)));
             is_reset(&mut vim);
 
             assert_eq!(vim.event(text_input("$")), Some(Cmd::Move(Move::LineEnd)));

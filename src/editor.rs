@@ -15,11 +15,6 @@ pub enum Mode {
     Normal,
 }
 
-enum Movement {
-    Relative(usize),
-    Absolute(usize),
-}
-
 pub struct Editor {
     // In insert mode this is the next position to be written (1 + self.lines[line]).
     cursor: usize,
@@ -183,7 +178,12 @@ impl Editor {
                 EditorEventResult::DrawText
             }
             Cmd::SwitchMove(mv) => {
-                self.movement(mv);
+                let truncated = self.movement(mv);
+                // Doing `a` at the last char at the end should have same behaviour
+                // as doing `A`, meaning we should put cursor under the new-line character (next pos)
+                if truncated {
+                    self.move_pos(usize::MAX);
+                }
                 self.mode = Mode::Insert;
                 EditorEventResult::DrawCursor
             }
@@ -191,25 +191,31 @@ impl Editor {
         }
     }
 
-    fn movement(&mut self, mv: &Move) {
+    fn movement(&mut self, mv: &Move) -> bool {
         match mv {
             Move::Start => {
                 self.cursor = 0;
                 self.line = 0;
             }
             Move::End => {
-                self.line = self.lines.len() - 1;
+                self.line = if self.lines.is_empty() {
+                    0
+                } else {
+                    self.lines.len() - 1
+                };
                 self.cursor = 0;
             }
             Move::Up => self.up(1),
             Move::Down => self.down(1),
             Move::Left => self.left(1),
-            Move::Right => self.right(1),
+            Move::Right => return self.right(1),
             Move::LineStart => self.move_pos(0),
             Move::LineEnd => self.move_pos(usize::MAX),
             Move::Repeat { count, mv } => {
                 for _ in 0..*count {
-                    self.movement(mv);
+                    if self.movement(mv) {
+                        return true;
+                    }
                 }
             }
             Move::Find(c) => {
@@ -223,7 +229,8 @@ impl Editor {
                 self.line = self.next_paragraph();
                 self.sync_line_cursor();
             }
-        }
+        };
+        false
     }
 }
 
@@ -231,8 +238,12 @@ impl Editor {
 impl Editor {
     fn delete_mv(&mut self, mv: &Move) {
         let start = self.pos();
-        self.movement(mv);
-        let end = self.pos();
+        let truncated_eol = self.movement(mv);
+        let mut end = self.pos();
+
+        if truncated_eol {
+            end = self.pos() + 1;
+        }
 
         match start.cmp(&end) {
             Ordering::Equal => self.delete_range(start..(start + 1)),
@@ -274,9 +285,35 @@ impl Editor {
         EditorEventResult::DrawText
     }
 
+    /// Delete chars in a range.
+    ///
+    /// If the range spans multiple lines then we just apply it to the entire line,
+    /// this is the same behaviour demonstrated by Vim. For example, try the command
+    /// `3dj` this will delete the next 3 lines in totality. It doesn't split the lines up.
     #[inline]
     fn delete_range(&mut self, range: Range<usize>) {
-        self.text.remove(range)
+        let start_line = self.text.char_to_line(range.start);
+        let end_line = self.text.char_to_line(range.end);
+        if start_line == end_line {
+            self.text.remove(range);
+            self.lines[start_line] = self.line_count(start_line) as u32;
+        } else {
+            let start = self.text.line_to_char(start_line);
+            let end = self.text.line_to_char(end_line) + self.text.line(end_line).len_chars();
+
+            self.text.remove(start..end);
+
+            let mut i = start_line;
+            for _ in start_line..(end_line + 1) {
+                if self.lines.is_empty() {
+                    break;
+                }
+                self.lines.remove(i);
+                if i >= self.lines.len() && !self.lines.is_empty() {
+                    i -= 1;
+                }
+            }
+        }
     }
 
     fn delete_line(&mut self, line: usize) {
@@ -412,13 +449,16 @@ impl Editor {
         self.sync_line_cursor();
     }
 
+    /// Returns true if attempted to move more characters than the line has
     #[inline]
-    fn right(&mut self, count: usize) {
+    fn right(&mut self, count: usize) -> bool {
         let c = self.lines[self.line] as usize;
-        if self.cursor + count > c {
+        if self.cursor + count >= c {
             self.cursor = if c == 0 { 0 } else { c - 1 };
+            true
         } else {
             self.cursor += count;
+            false
         }
     }
 
@@ -432,7 +472,11 @@ impl Editor {
 
     #[inline]
     fn left(&mut self, count: usize) {
-        self.cursor -= count;
+        if count > self.cursor {
+            self.cursor = 0;
+        } else {
+            self.cursor -= count;
+        }
     }
 
     #[inline]
@@ -456,6 +500,11 @@ impl Editor {
     #[inline]
     pub fn text_all(&self) -> RopeSlice {
         self.text.slice(0..self.text.len_chars())
+    }
+
+    #[inline]
+    fn text_str(&self) -> Option<&str> {
+        self.text_all().as_str()
     }
 
     #[inline]
@@ -492,6 +541,20 @@ impl Editor {
             self.lines[0..self.line]
                 .iter()
                 .fold(0, |acc, line| acc + 1 + *line as usize)
+        }
+    }
+
+    /// Calculate the amount of chars in the given line (excluding new line characters)
+    #[inline]
+    fn line_count(&self, idx: usize) -> usize {
+        if self.lines.is_empty() {
+            0
+        } else if idx == self.lines.len() - 1 {
+            // If it's the last line then we don't need to subtract the newline character from the count
+            self.text.line(idx).len_chars()
+        } else {
+            // Subtract the new line character from the count
+            self.text.line(idx).len_chars() - 1
         }
     }
 
@@ -568,6 +631,98 @@ mod tests {
     #[cfg(test)]
     mod edit {
         use super::*;
+
+        #[cfg(test)]
+        mod delete_range {
+            use super::*;
+
+            #[test]
+            fn single_line() {
+                let mut editor = Editor::new();
+                editor.insert("1");
+                editor.enter();
+                editor.insert("1");
+                let start = editor.pos();
+                editor.insert("2");
+                editor.insert("3");
+                let end = editor.pos();
+                editor.enter();
+                editor.insert("1");
+                editor.up(1);
+                editor.cursor = 0;
+
+                editor.delete_range(start..end);
+                assert_eq!(editor.text_str().unwrap(), "1\n1\n1");
+                assert_eq!(editor.lines, vec![1, 1, 1]);
+            }
+
+            #[test]
+            fn single_line_full() {
+                let mut editor = Editor::new();
+                editor.insert("1");
+                editor.enter();
+                let start = editor.pos();
+                editor.insert("1");
+                editor.insert("2");
+                editor.insert("3");
+                let end = editor.pos();
+                editor.enter();
+                editor.insert("1");
+                editor.up(1);
+                editor.cursor = 0;
+
+                editor.delete_range(start..end);
+                assert_eq!(editor.text_str().unwrap(), "1\n\n1");
+                assert_eq!(editor.lines, vec![1, 0, 1]);
+            }
+
+            #[test]
+            fn multi_line() {
+                let mut editor = Editor::new();
+                editor.insert("1");
+                editor.enter();
+                editor.insert("1");
+                editor.insert("2");
+                editor.insert("3");
+                editor.enter();
+                editor.insert("1");
+                editor.up(1);
+                let start = editor.pos();
+                editor.down(1);
+                let end = editor.pos();
+
+                editor.delete_range(start..end);
+                assert_eq!(editor.text_str().unwrap(), "1\n");
+                assert_eq!(editor.lines, vec![1]);
+            }
+
+            #[test]
+            fn entire_text() {
+                let mut editor = Editor::new();
+                editor.insert("1");
+                editor.insert("2");
+                editor.insert("3");
+                editor.enter();
+                editor.insert("1");
+                editor.insert("2");
+                editor.insert("3");
+                editor.enter();
+                editor.insert("1");
+                editor.insert("2");
+                editor.insert("3");
+
+                // move to start
+                editor.cursor = 0;
+                editor.line = 0;
+                let start = editor.pos();
+                editor.line = editor.lines.len() - 1;
+                let end = editor.pos();
+
+                editor.delete_range(start..end);
+                assert_eq!(editor.text_str().unwrap(), "");
+                assert_eq!(editor.lines, vec![]);
+            }
+        }
 
         #[test]
         fn delete_line_first() {
