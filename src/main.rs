@@ -1,7 +1,7 @@
 use core::time;
 use std::{ffi::CStr, fs};
 
-use glyph::{EventResult, Window, SCREEN_HEIGHT, SCREEN_WIDTH};
+use glyph::{EventResult, Window, SCREEN_HEIGHT, SCREEN_WIDTH, TOKYO_NIGHT_STORM};
 
 fn main() {
     #[cfg(debug_assertions)]
@@ -47,11 +47,11 @@ fn main() {
         gl::Enable(gl::BLEND);
         gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
         gl::Enable(gl::TEXTURE_2D);
-        gl::ClearColor(0.157, 0.157, 0.157, 1.0);
+        gl::ClearColor(0.0, 0.0, 0.0, 1.0);
         gl::Clear(gl::COLOR_BUFFER_BIT);
     }
 
-    let mut editor_window = Window::new(filepath);
+    let mut editor_window = Window::new(filepath, &TOKYO_NIGHT_STORM);
     editor_window.render_text();
     window.gl_swap_window();
 
@@ -68,7 +68,7 @@ fn main() {
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             gl::Enable(gl::TEXTURE_2D);
-            gl::ClearColor(0.157, 0.157, 0.157, 1.0);
+            editor_window.theme().draw_bg();
             gl::Clear(gl::COLOR_BUFFER_BIT);
         }
 

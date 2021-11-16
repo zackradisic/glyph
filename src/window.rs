@@ -5,14 +5,15 @@ use std::{
 };
 
 use gl::types::{GLint, GLsizeiptr, GLuint, GLvoid};
+use once_cell::sync::Lazy;
 use sdl2::{
     event::Event,
     keyboard::{Keycode, Mod},
 };
 
 use crate::{
-    atlas::Atlas, Editor, EditorEventResult, EventResult, GLProgram, Shader, SCREEN_HEIGHT,
-    SCREEN_WIDTH,
+    atlas::Atlas, Color, Editor, EditorEventResult, EventResult, GLProgram, Shader, Theme,
+    SCREEN_HEIGHT, SCREEN_WIDTH,
 };
 
 #[repr(C)]
@@ -23,43 +24,38 @@ struct Point {
     t: f32,
 }
 
+const WHITE: Color = Color {
+    r: 1.0,
+    g: 1.0,
+    b: 1.0,
+    a: 1.0,
+};
+
 const SX: f32 = 1.0 / SCREEN_WIDTH as f32;
 const SY: f32 = 1.0 / SCREEN_HEIGHT as f32;
 
 const FG: [f32; 4] = [0.92156863, 0.85882354, 0.69803923, 1.0];
 
-fn hex_to_rgba(hex: &str) -> [f32; 4] {
-    let mut rgba = [0.0, 0.0, 0.0, 1.0];
-    let hex = hex.trim_start_matches('#');
-    for (i, c) in hex
-        .chars()
-        .step_by(2)
-        .zip(hex.chars().skip(1).step_by(2))
-        .enumerate()
-    {
-        let c = c.0.to_digit(16).unwrap() << 4 | c.1.to_digit(16).unwrap();
-        rgba[i] = c as f32 / 255.0;
-    }
-    rgba
-}
-
-pub struct Window {
+pub struct Window<'theme> {
     atlas: Atlas,
     text_shader: TextShaderProgram,
     cursor_shader: CursorShaderProgram,
     editor: Editor,
     text_coords: Vec<Point>,
-    cursor_coords: Vec<f32>,
+    text_colors: Vec<Color>,
+    cursor_coords: [f32; 18],
     y_offset: f32,
     x_offset: f32,
     text_height: f32,
     text_width: f32,
     // Time since last stroke in ms
     last_stroke: u32,
+    white: Color,
+    theme: &'theme Lazy<Theme>,
 }
 
-impl Window {
-    pub fn new(initial_text: Option<String>) -> Window {
+impl<'theme> Window<'theme> {
+    pub fn new(initial_text: Option<String>, theme: &'theme Lazy<Theme>) -> Self {
         let font_path = "./fonts/FiraCode.ttf";
         let ft_lib = freetype::Library::init().unwrap();
         let mut face = ft_lib.new_face(font_path, 0).unwrap();
@@ -75,12 +71,15 @@ impl Window {
             cursor_shader,
             editor: Editor::with_text(initial_text),
             text_coords: Vec::new(),
-            cursor_coords: Vec::new(),
+            text_colors: Vec::new(),
+            cursor_coords: Default::default(),
             y_offset: 0.0,
             x_offset: 0.0,
             text_height: 0.0,
             text_width: 0.0,
             last_stroke: 0,
+            white: Color::from_hex("#a9b1d6"),
+            theme,
         }
     }
 
@@ -118,7 +117,7 @@ impl Window {
 }
 
 // This impl contains utilities
-impl Window {
+impl<'theme> Window<'theme> {
     fn scroll_y(&mut self, amount: f32) {
         match amount > 0.0 {
             true => {
@@ -159,7 +158,7 @@ impl Window {
 }
 
 // This impl contains graphics functions
-impl Window {
+impl<'theme> Window<'theme> {
     pub fn queue_cursor(&mut self) {
         let w = self.atlas.max_w * SX;
         let real_h = self.atlas.max_h * SY;
@@ -169,7 +168,7 @@ impl Window {
             + (self.editor.cursor() as f32 * (w/*+ self.atlas.glyphs[35].advance_x * SX*/));
         let y = ((1f32 - 50f32 * SY) + real_h) - (self.editor.line() as f32 * real_h);
 
-        self.cursor_coords = vec![
+        self.cursor_coords = [
             // bottom left
             x,
             y - h,
@@ -207,7 +206,6 @@ impl Window {
 
         // Draw text
         unsafe {
-            gl::Uniform4fv(self.text_shader.uniform_color, 1, FG.as_ptr() as *const f32);
             gl::VertexAttrib1f(self.text_shader.attrib_ytranslate, SY * self.y_offset);
             gl::VertexAttrib1f(self.text_shader.attrib_xtranslate, self.x_offset * SX);
 
@@ -216,9 +214,7 @@ impl Window {
             gl::Uniform1i(self.text_shader.uniform_tex, 0);
 
             // Set up the VBO for our vertex data
-            gl::EnableVertexAttribArray(self.text_shader.attrib_coord);
             gl::BindBuffer(gl::ARRAY_BUFFER, self.text_shader.vbo);
-
             gl::VertexAttribPointer(
                 self.text_shader.attrib_coord,
                 4,
@@ -227,14 +223,33 @@ impl Window {
                 0,
                 null(),
             );
-
+            gl::EnableVertexAttribArray(self.text_shader.attrib_coord);
             gl::BufferData(
                 gl::ARRAY_BUFFER,
                 (self.text_coords.len() * mem::size_of::<Point>()) as GLsizeiptr,
                 self.text_coords.as_ptr() as *const GLvoid,
                 gl::DYNAMIC_DRAW,
             );
+
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.text_shader.vbo_color);
+            gl::VertexAttribPointer(
+                self.text_shader.attrib_v_color,
+                4,
+                gl::FLOAT,
+                gl::FALSE,
+                0,
+                null(),
+            );
+            gl::EnableVertexAttribArray(self.text_shader.attrib_v_color);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (self.text_colors.len() * mem::size_of::<Color>()) as GLsizeiptr,
+                self.text_colors.as_ptr() as *const GLvoid,
+                gl::DYNAMIC_DRAW,
+            );
+
             gl::DrawArrays(gl::TRIANGLES, 0, self.text_coords.len() as i32);
+            gl::DisableVertexAttribArray(self.text_shader.attrib_v_color);
             gl::DisableVertexAttribArray(self.text_shader.attrib_coord);
         }
 
@@ -265,7 +280,7 @@ impl Window {
 
             gl::BufferData(
                 gl::ARRAY_BUFFER,
-                (18 * mem::size_of::<f32>()).try_into().unwrap(),
+                (self.cursor_coords.len() * mem::size_of::<f32>()) as isize,
                 self.cursor_coords.as_ptr() as *const c_void,
                 gl::DYNAMIC_DRAW,
             );
@@ -293,6 +308,7 @@ impl Window {
         let starting_x = x;
         // TODO: Cache this
         let mut coords: Vec<Point> = Vec::with_capacity(6 * text.len_chars());
+        let mut colors = Vec::with_capacity(6 * text.len_chars());
 
         let mut text_height = 0.0;
         let mut line_width = 0.0;
@@ -365,13 +381,29 @@ impl Window {
                 s: self.atlas.glyphs[c].tx + self.atlas.glyphs[c].bitmap_w / self.atlas.w as f32,
                 t: self.atlas.glyphs[c].ty + self.atlas.glyphs[c].bitmap_h / self.atlas.h as f32,
             });
+
+            colors.push(self.white.clone());
+            colors.push(self.white.clone());
+            colors.push(self.white.clone());
+            colors.push(self.white.clone());
+            colors.push(self.white.clone());
+            colors.push(self.white.clone());
         }
 
-        // TODO: It's probably faster to directly mutate the vec instead of making a
-        // new one and replacing it
+        // TODO: It's faster to directly mutate these vecs instead of making
+        // new ones and replacing them. Also if we're only appending new text we don't need to
+        // rebuild vecs in entirety
         self.text_coords = coords;
+        self.text_colors = colors;
+
         self.text_height = text_height;
         self.text_width = self.text_width.max(line_width);
+    }
+}
+
+impl<'theme> Window<'theme> {
+    pub fn theme(&self) -> &Lazy<Theme> {
+        self.theme
     }
 }
 
@@ -380,9 +412,10 @@ pub struct TextShaderProgram {
     attrib_coord: GLuint,
     attrib_ytranslate: GLuint,
     attrib_xtranslate: GLuint,
+    attrib_v_color: GLuint,
     uniform_tex: GLint,
-    uniform_color: GLint,
     vbo: GLuint,
+    vbo_color: GLuint,
 }
 
 impl TextShaderProgram {
@@ -407,13 +440,19 @@ impl TextShaderProgram {
             gl::GenBuffers(1, &mut vbo as *mut GLuint);
         }
 
+        let mut vbo_color: GLuint = 0;
+        unsafe {
+            gl::GenBuffers(1, &mut vbo_color as *mut GLuint);
+        }
+
         Self {
             attrib_coord: program.attrib("coord").unwrap() as u32,
             attrib_ytranslate: program.attrib("y_translate").unwrap() as u32,
             attrib_xtranslate: program.attrib("x_translate").unwrap() as u32,
+            attrib_v_color: program.attrib("vertex_color").unwrap() as u32,
             uniform_tex: program.uniform("tex").unwrap(),
-            uniform_color: program.uniform("color").unwrap(),
             vbo,
+            vbo_color,
             program,
         }
     }

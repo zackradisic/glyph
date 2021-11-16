@@ -88,8 +88,8 @@ impl Editor {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => {
-                    self.mode = Mode::Normal;
-                    EditorEventResult::Nothing
+                    self.switch_mode(Mode::Normal);
+                    EditorEventResult::DrawCursor
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::Backspace),
@@ -128,7 +128,7 @@ impl Editor {
     fn handle_cmd(&mut self, cmd: &Cmd) -> EditorEventResult {
         match cmd {
             Cmd::SwitchMode => {
-                self.mode = Mode::Insert;
+                self.switch_mode(Mode::Insert);
                 EditorEventResult::DrawCursor
             }
             Cmd::Repeat { count, cmd } => {
@@ -151,12 +151,12 @@ impl Editor {
                 EditorEventResult::DrawText
             }
             Cmd::Change(None) => {
-                self.mode = Mode::Insert;
+                self.switch_mode(Mode::Insert);
                 self.delete_line(self.line);
                 EditorEventResult::DrawText
             }
             Cmd::Change(Some(mv)) => {
-                self.mode = Mode::Insert;
+                self.switch_mode(Mode::Insert);
                 self.delete_mv(mv);
                 EditorEventResult::DrawText
             }
@@ -166,7 +166,7 @@ impl Editor {
             }
             Cmd::NewLine(NewLine { up, switch_mode }) => {
                 if *switch_mode {
-                    self.mode = Mode::Insert;
+                    self.switch_mode(Mode::Insert);
                 }
 
                 if !up {
@@ -178,21 +178,23 @@ impl Editor {
                 EditorEventResult::DrawText
             }
             Cmd::SwitchMove(mv) => {
-                let truncated = self.movement(mv);
+                self.switch_mode(Mode::Insert);
                 // Doing `a` at the last char at the end should have same behaviour
                 // as doing `A`, meaning we should put cursor under the new-line character (next pos)
-                if truncated {
+                if self.movement(mv) {
                     self.move_pos(usize::MAX);
                 }
-                self.mode = Mode::Insert;
                 EditorEventResult::DrawCursor
             }
             r => todo!("Unimplemented: {:?}", r),
         }
     }
 
+    /// Returns true if the movement was truncated (it exceeded the end of the line
+    /// and stopped).
     fn movement(&mut self, mv: &Move) -> bool {
         match mv {
+            Move::Word(skip_punctuation) => self.next_word(*skip_punctuation),
             Move::Start => {
                 self.cursor = 0;
                 self.line = 0;
@@ -212,6 +214,11 @@ impl Editor {
             Move::LineStart => self.move_pos(0),
             Move::LineEnd => self.move_pos(usize::MAX),
             Move::Repeat { count, mv } => {
+                // TODO: We can be smarter about this and pass
+                // the count into the movement, ex. `10l` -> `self.right(10).
+                //
+                // Additionally, we can stop early for movements like `$` or `0`
+                // where repetitions don't affect the cursor anymore.
                 for _ in 0..*count {
                     if self.movement(mv) {
                         return true;
@@ -379,6 +386,33 @@ impl Editor {
 
 // This impl contains movement utilities
 impl Editor {
+    #[inline]
+    fn next_word(&mut self, skip_punctuation: bool) {
+        // TODO: Skip punctuation
+        self.cursor = if self.lines[self.line] == 0 {
+            0
+        } else {
+            // TODO: This doesn't work for multiple spaces:
+            // `    HELLO`
+            // this will just move to the second space of hte line
+            self.text
+                .line(self.line)
+                .chars()
+                .into_iter()
+                .enumerate()
+                .skip(self.cursor)
+                .find(|(_, c)| *c == ' ')
+                .map(|(idx, _)| {
+                    if idx >= self.lines[self.line] as usize {
+                        self.lines[self.line] as usize - 1
+                    } else {
+                        idx + 1
+                    }
+                })
+                .unwrap_or(self.cursor)
+        };
+    }
+
     /// Return line of the previous paragraph
     #[inline]
     fn prev_paragraph(&mut self) -> usize {
@@ -464,7 +498,12 @@ impl Editor {
 
     fn move_pos(&mut self, pos: usize) {
         if pos > self.lines[self.line] as usize {
-            self.cursor = self.lines[self.line] as usize
+            // Put it on the newline char (the space after the last char of the line),
+            // but only on insert mode. This is Vim behaviour
+            self.cursor = self.lines[self.line] as usize;
+            if matches!(self.mode, Mode::Normal) && self.lines[self.line] > 0 {
+                self.cursor -= 1;
+            }
         } else {
             self.cursor = pos;
         }
@@ -490,8 +529,21 @@ impl Editor {
     }
 }
 
-// This impl contains small utility functions
+// This impl contains generic utility functions
 impl Editor {
+    #[inline]
+    fn switch_mode(&mut self, mode: Mode) {
+        if let (Mode::Insert, Mode::Normal) = (self.mode, mode) {
+            println!("cursor={} count={}", self.cursor, self.lines[self.line]);
+            // If we are switching from insert to normal mode and we are on the new-line character,
+            // move it back since we disallow that in normal mode
+            if self.cursor == self.lines[self.line] as usize && self.cursor > 0 {
+                self.cursor -= 1;
+            }
+        }
+        self.mode = mode;
+    }
+
     #[inline]
     pub fn text(&self, range: Range<usize>) -> RopeSlice {
         self.text.slice(range)

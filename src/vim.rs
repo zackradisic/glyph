@@ -34,6 +34,7 @@ pub enum Move {
     ParagraphEnd,
     Start,
     End,
+    Word(bool),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -54,6 +55,7 @@ pub enum Token {
     ParagraphEnd,
     Number(u16),
     Char(char),
+    Word(bool),
 }
 
 #[derive(Debug, PartialEq)]
@@ -154,6 +156,7 @@ impl Vim {
                         "$" => self.cmd_stack.push(Token::LineEnd),
                         "{" => self.cmd_stack.push(Token::ParagraphBegin),
                         "}" => self.cmd_stack.push(Token::ParagraphEnd),
+                        "w" => self.cmd_stack.push(Token::Word(false)),
                         r => {
                             let c = r.chars().next().unwrap();
                             if c.is_numeric() {
@@ -257,6 +260,7 @@ impl Vim {
             Some(Token::ParagraphEnd) => Ok(Move::ParagraphEnd),
             Some(Token::Start) => Ok(Move::Start),
             Some(Token::End) => Ok(Move::End),
+            Some(Token::Word(skip_punctuation)) => Ok(Move::Word(skip_punctuation)),
             Some(Token::Find) => match self.next() {
                 Some(Token::Char(char)) => Ok(Move::Find(*char)),
                 Some(_) => Err(FailAction::Reset),
