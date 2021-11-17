@@ -13,7 +13,7 @@ use sdl2::{
 
 use crate::{
     atlas::Atlas, Color, Editor, EditorEventResult, EventResult, GLProgram, Shader, Theme,
-    SCREEN_HEIGHT, SCREEN_WIDTH,
+    ThemeType, SCREEN_HEIGHT, SCREEN_WIDTH,
 };
 
 #[repr(C)]
@@ -51,11 +51,11 @@ pub struct Window<'theme> {
     // Time since last stroke in ms
     last_stroke: u32,
     white: Color,
-    theme: &'theme Lazy<Theme>,
+    theme: &'theme ThemeType,
 }
 
 impl<'theme> Window<'theme> {
-    pub fn new(initial_text: Option<String>, theme: &'theme Lazy<Theme>) -> Self {
+    pub fn new(initial_text: Option<String>, theme: &'theme ThemeType) -> Self {
         let font_path = "./fonts/FiraCode.ttf";
         let ft_lib = freetype::Library::init().unwrap();
         let mut face = ft_lib.new_face(font_path, 0).unwrap();
@@ -399,10 +399,14 @@ impl<'theme> Window<'theme> {
         self.text_height = text_height;
         self.text_width = self.text_width.max(line_width);
     }
+
+    // fn queue_highlights(&mut self) {
+
+    // }
 }
 
 impl<'theme> Window<'theme> {
-    pub fn theme(&self) -> &Lazy<Theme> {
+    pub fn theme(&self) -> &ThemeType {
         self.theme
     }
 }

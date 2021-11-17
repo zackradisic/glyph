@@ -1,0 +1,16 @@
+[package]
+name = "syntax"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+
+[dependencies]
+tree-sitter = "0.20.0"
+tree-sitter-highlight = {path = "../../tree-sitter/highlight"}
+tree-sitter-javascript = "0.20.0"
+macros = { path = "../macros" }
+
+[patch.crates-io]
+tree-sitter = { path ="../..tree-sitter/lib"}

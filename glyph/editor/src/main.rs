@@ -1,9 +1,48 @@
 use core::time;
 use std::{ffi::CStr, fs};
+use syntax::tree_sitter_highlight::{HighlightConfiguration, HighlightEvent};
+use syntax::Highlight;
 
 use glyph::{EventResult, Window, SCREEN_HEIGHT, SCREEN_WIDTH, TOKYO_NIGHT_STORM};
 
 fn main() {
+    // use tree_sitter_highlight::Highlighter;
+
+    // let mut highlighter = Highlighter::new();
+    // let javascript_language = tree_sitter_javascript::language();
+
+    // let mut javascript_config = HighlightConfiguration::new(
+    //     javascript_language,
+    //     tree_sitter_javascript::HIGHLIGHT_QUERY,
+    //     tree_sitter_javascript::INJECTION_QUERY,
+    //     tree_sitter_javascript::LOCALS_QUERY,
+    // )
+    // .unwrap();
+    // javascript_config.configure(highlight_names);
+
+    // let src = b"if (true) { console.log('hi') } ";
+    // let highlights = highlighter
+    //     .highlight(&javascript_config, src, None, |_| None)
+    //     .unwrap();
+
+    // for event in highlights {
+    //     match event.unwrap() {
+    //         HighlightEvent::Source { start, end } => {
+    //             println!("source: {}", std::str::from_utf8(&src[start..end]).unwrap());
+    //         }
+    //         HighlightEvent::HighlightStart(s) => {
+    //             if let Some(name) = highlight_names.get(s.0) {
+    //                 eprintln!("highlight style field name: {}", name);
+    //             } else {
+    //                 eprintln!("DIDN'T GET ANYTHING");
+    //             }
+    //         }
+    //         HighlightEvent::HighlightEnd => {
+    //             eprintln!("highlight style ended");
+    //         }
+    //     }
+    // }
+
     #[cfg(debug_assertions)]
     let filepath_idx = 2;
     #[cfg(not(debug_assertions))]
@@ -68,7 +107,8 @@ fn main() {
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             gl::Enable(gl::TEXTURE_2D);
-            editor_window.theme().draw_bg();
+            let bg = editor_window.theme().bg();
+            gl::ClearColor(bg.r, bg.g, bg.b, bg.a);
             gl::Clear(gl::COLOR_BUFFER_BIT);
         }
 

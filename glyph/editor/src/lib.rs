@@ -1,14 +1,18 @@
+use once_cell::sync::Lazy;
+use syntax::Highlight;
+
 pub use atlas::*;
 pub use constants::*;
 pub use editor::*;
 pub use gl_program::*;
-use once_cell::sync::Lazy;
+pub use theme::*;
 pub use window::*;
 
 mod atlas;
 mod constants;
 mod editor;
 mod gl_program;
+mod theme;
 mod vim;
 mod window;
 
@@ -38,10 +42,10 @@ pub enum Delete {
 #[repr(C)]
 #[derive(Clone)]
 pub struct Color {
-    r: f32,
-    g: f32,
-    b: f32,
-    a: f32,
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    pub a: f32,
 }
 
 impl Color {
@@ -66,32 +70,7 @@ impl Color {
     }
 }
 
-#[derive(Clone)]
-pub struct Theme {
-    fg: Color,
-    bg: Color,
-}
+pub type ThemeType = Lazy<Box<dyn Theme + Send + Sync>>;
 
-impl Theme {
-    #[inline]
-    pub fn bg(&self) -> &Color {
-        &self.bg
-    }
-
-    #[inline]
-    pub fn fg(&self) -> &Color {
-        &self.fg
-    }
-
-    #[inline]
-    pub fn draw_bg(&self) {
-        unsafe {
-            gl::ClearColor(self.bg.r, self.bg.g, self.bg.b, self.bg.a);
-        }
-    }
-}
-
-pub static TOKYO_NIGHT_STORM: Lazy<Theme> = Lazy::new(|| Theme {
-    fg: Color::from_hex("#c0caf5"),
-    bg: Color::from_hex("#24283b"),
-});
+pub static TOKYO_NIGHT_STORM: Lazy<Box<dyn Theme + Send + Sync>> =
+    Lazy::new(|| Box::new(TokyoNightStorm::new()));
