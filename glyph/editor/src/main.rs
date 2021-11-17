@@ -1,7 +1,5 @@
 use core::time;
 use std::{ffi::CStr, fs};
-use syntax::tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
-use syntax::Highlight;
 
 use glyph::{EventResult, Window, SCREEN_HEIGHT, SCREEN_WIDTH, TOKYO_NIGHT_STORM};
 

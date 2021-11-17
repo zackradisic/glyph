@@ -85,6 +85,13 @@ impl Editor {
             Mode::Normal => self.normal_mode(event),
             Mode::Insert => match event {
                 Event::KeyDown {
+                    keycode: Some(Keycode::Tab),
+                    ..
+                } => {
+                    self.insert("  ");
+                    EditorEventResult::DrawText
+                }
+                Event::KeyDown {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => {
@@ -266,7 +273,7 @@ impl Editor {
 
         self.text.insert(pos, text);
         self.cursor += text.len();
-        self.lines[self.line] += 1;
+        self.lines[self.line] += text.len() as u32;
     }
 
     fn backspace(&mut self) -> EditorEventResult {
@@ -387,7 +394,7 @@ impl Editor {
 // This impl contains movement utilities
 impl Editor {
     #[inline]
-    fn next_word(&mut self, skip_punctuation: bool) {
+    fn next_word(&mut self, _skip_punctuation: bool) {
         // TODO: Skip punctuation
         self.cursor = if self.lines[self.line] == 0 {
             0

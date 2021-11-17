@@ -25,8 +25,8 @@ struct Point {
     s: f32,
     t: f32,
 }
-const SX: f32 = 1.0 / SCREEN_WIDTH as f32;
-const SY: f32 = 1.0 / SCREEN_HEIGHT as f32;
+const SX: f32 = 0.8 / SCREEN_WIDTH as f32;
+const SY: f32 = 0.8 / SCREEN_HEIGHT as f32;
 
 pub struct Window<'theme, 'highlight> {
     // Graphics
@@ -64,6 +64,9 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
 
         let highlighter = Highlighter::new();
 
+        let f = syntax::RUST_CFG.names();
+        println!("HIGHLIGHT NAMES: {:#?}", f);
+
         Self {
             atlas,
             text_shader,
@@ -79,7 +82,7 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
             last_stroke: 0,
             theme,
             highlighter,
-            highlight_cfg: &syntax::JS_CFG,
+            highlight_cfg: &syntax::RUST_CFG,
         }
     }
 
@@ -95,7 +98,7 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                 if x.abs() > y.abs() {
                     self.scroll_x(x as f32 * -4.0);
                 } else {
-                    self.scroll_y(y as f32 * 4.0);
+                    self.scroll_y(y as f32 * 8.0);
                 }
                 self.render_text();
                 EventResult::Draw
@@ -407,13 +410,6 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
 
         // Assume chars are 1 byte long (ascii)
         let mut text_colors: Vec<&Color> = vec![self.theme.fg(); src.len()];
-
-        // if src.len() >= 2 {
-        //     let highlight = self.theme.highlight(Highlight::Keyword).unwrap();
-        //     for i in 0..(2 * 6) {
-        //         text_colors[i] = highlight.clone();
-        //     }
-        // }
 
         let highlights = self
             .highlighter

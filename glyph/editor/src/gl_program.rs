@@ -1,7 +1,4 @@
-use std::{
-    ffi::{CStr, CString},
-    fs,
-};
+use std::ffi::{CStr, CString};
 
 use gl::types::GLint;
 

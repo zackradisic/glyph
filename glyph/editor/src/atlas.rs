@@ -77,13 +77,13 @@ impl Atlas {
             roww += g.bitmap().width() as u32 + 1;
             rowh = std::cmp::max(rowh, g.bitmap().rows() as u32);
         }
-        let mut max_h: f32 = rowh as f32;
+        let max_h: f32 = rowh as f32;
 
         w = std::cmp::max(w, roww);
         h += rowh;
 
         unsafe {
-            /* Create a texture that will be used to hold all ASCII glyphs */
+            // Create a texture that will be used to hold all ASCII glyphs
             gl::ActiveTexture(gl::TEXTURE0);
             gl::GenTextures(1, &mut tex as *mut GLuint);
             gl::BindTexture(gl::TEXTURE_2D, tex);

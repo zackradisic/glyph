@@ -1,5 +1,4 @@
 use once_cell::sync::Lazy;
-use syntax::Highlight;
 
 pub use atlas::*;
 pub use constants::*;
