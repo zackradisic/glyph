@@ -89,7 +89,6 @@ dependencies = [
  "once_cell",
  "ropey",
  "sdl2",
- "syn",
  "syntax",
 ]
 
@@ -235,9 +234,11 @@ name = "syntax"
 version = "0.1.0"
 dependencies = [
  "macros",
- "tree-sitter 0.20.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "once_cell",
+ "tree-sitter 0.20.0",
  "tree-sitter-highlight",
  "tree-sitter-javascript",
+ "tree-sitter-rust",
 ]
 
 [[package]]
@@ -262,7 +263,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.20.0"
+version = "0.19.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad726ec26496bf4c083fff0f43d4eb3a2ad1bba305323af5ff91383c0b6ecac0"
 dependencies = [
  "cc",
  "regex",
@@ -271,8 +274,6 @@ dependencies = [
 [[package]]
 name = "tree-sitter"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63ec02a07a782abef91279b72fe8fd2bee4c168a22112cedec5d3b0d49b9e4f9"
 dependencies = [
  "cc",
  "regex",
@@ -294,7 +295,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2490fab08630b2c8943c320f7b63473cbf65511c8d83aec551beb9b4375906ed"
 dependencies = [
  "cc",
- "tree-sitter 0.20.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tree-sitter 0.20.0",
+]
+
+[[package]]
+name = "tree-sitter-rust"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "784f7ef9cdbd4c895dc2d4bb785e95b4a5364a602eec803681db83d1927ddf15"
+dependencies = [
+ "cc",
+ "tree-sitter 0.19.5",
 ]
 
 [[package]]

@@ -10,10 +10,12 @@ use sdl2::{
     event::Event,
     keyboard::{Keycode, Mod},
 };
+use syntax::tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
+use syntax::Highlight;
 
 use crate::{
-    atlas::Atlas, Color, Editor, EditorEventResult, EventResult, GLProgram, Shader, Theme,
-    ThemeType, SCREEN_HEIGHT, SCREEN_WIDTH,
+    atlas::Atlas, Color, Editor, EditorEventResult, EventResult, GLProgram, Shader, ThemeType,
+    SCREEN_HEIGHT, SCREEN_WIDTH,
 };
 
 #[repr(C)]
@@ -23,20 +25,11 @@ struct Point {
     s: f32,
     t: f32,
 }
-
-const WHITE: Color = Color {
-    r: 1.0,
-    g: 1.0,
-    b: 1.0,
-    a: 1.0,
-};
-
 const SX: f32 = 1.0 / SCREEN_WIDTH as f32;
 const SY: f32 = 1.0 / SCREEN_HEIGHT as f32;
 
-const FG: [f32; 4] = [0.92156863, 0.85882354, 0.69803923, 1.0];
-
-pub struct Window<'theme> {
+pub struct Window<'theme, 'highlight> {
+    // Graphics
     atlas: Atlas,
     text_shader: TextShaderProgram,
     cursor_shader: CursorShaderProgram,
@@ -48,13 +41,17 @@ pub struct Window<'theme> {
     x_offset: f32,
     text_height: f32,
     text_width: f32,
+
     // Time since last stroke in ms
     last_stroke: u32,
-    white: Color,
     theme: &'theme ThemeType,
+
+    // Syntax highlighting
+    highlighter: Highlighter,
+    highlight_cfg: &'highlight Lazy<HighlightConfiguration>,
 }
 
-impl<'theme> Window<'theme> {
+impl<'theme, 'highlight> Window<'theme, 'highlight> {
     pub fn new(initial_text: Option<String>, theme: &'theme ThemeType) -> Self {
         let font_path = "./fonts/FiraCode.ttf";
         let ft_lib = freetype::Library::init().unwrap();
@@ -64,6 +61,8 @@ impl<'theme> Window<'theme> {
         let atlas = Atlas::new(&mut face, 48, text_shader.uniform_tex).unwrap();
 
         let cursor_shader = CursorShaderProgram::default();
+
+        let highlighter = Highlighter::new();
 
         Self {
             atlas,
@@ -78,8 +77,9 @@ impl<'theme> Window<'theme> {
             text_height: 0.0,
             text_width: 0.0,
             last_stroke: 0,
-            white: Color::from_hex("#a9b1d6"),
             theme,
+            highlighter,
+            highlight_cfg: &syntax::JS_CFG,
         }
     }
 
@@ -117,7 +117,7 @@ impl<'theme> Window<'theme> {
 }
 
 // This impl contains utilities
-impl<'theme> Window<'theme> {
+impl<'theme, 'highlight> Window<'theme, 'highlight> {
     fn scroll_y(&mut self, amount: f32) {
         match amount > 0.0 {
             true => {
@@ -158,7 +158,13 @@ impl<'theme> Window<'theme> {
 }
 
 // This impl contains graphics functions
-impl<'theme> Window<'theme> {
+impl<'theme, 'highlight> Window<'theme, 'highlight> {
+    pub fn render_text(&mut self) {
+        self.queue_cursor();
+        let colors = self.queue_highlights();
+        self.queue_text(colors, -1f32 + 8f32 * SX, 1f32 - 50f32 * SY, SX, SY);
+    }
+
     pub fn queue_cursor(&mut self) {
         let w = self.atlas.max_w * SX;
         let real_h = self.atlas.max_h * SY;
@@ -194,11 +200,6 @@ impl<'theme> Window<'theme> {
             y - h,
             0.0,
         ];
-    }
-
-    pub fn render_text(&mut self) {
-        self.queue_cursor();
-        self.queue_text(-1f32 + 8f32 * SX, 1f32 - 50f32 * SY, SX, SY);
     }
 
     pub fn frame(&self, ticks_ms: u32) {
@@ -303,17 +304,18 @@ impl<'theme> Window<'theme> {
         }
     }
 
-    fn queue_text(&mut self, mut x: f32, mut y: f32, sx: f32, sy: f32) {
+    fn queue_text(&mut self, colors: Vec<&Color>, mut x: f32, mut y: f32, sx: f32, sy: f32) {
         let text = self.editor.text_all();
         let starting_x = x;
+
         // TODO: Cache this
         let mut coords: Vec<Point> = Vec::with_capacity(6 * text.len_chars());
-        let mut colors = Vec::with_capacity(6 * text.len_chars());
+        let mut colors_vertex: Vec<Color> = Vec::with_capacity(coords.capacity());
 
         let mut text_height = 0.0;
         let mut line_width = 0.0;
 
-        for ch in text.chars() {
+        for (i, ch) in text.chars().enumerate() {
             let c = ch as usize;
 
             // Calculate the vertex and texture coordinates
@@ -382,30 +384,75 @@ impl<'theme> Window<'theme> {
                 t: self.atlas.glyphs[c].ty + self.atlas.glyphs[c].bitmap_h / self.atlas.h as f32,
             });
 
-            colors.push(self.white.clone());
-            colors.push(self.white.clone());
-            colors.push(self.white.clone());
-            colors.push(self.white.clone());
-            colors.push(self.white.clone());
-            colors.push(self.white.clone());
+            colors_vertex.push(colors[i].clone());
+            colors_vertex.push(colors[i].clone());
+            colors_vertex.push(colors[i].clone());
+            colors_vertex.push(colors[i].clone());
+            colors_vertex.push(colors[i].clone());
+            colors_vertex.push(colors[i].clone());
         }
 
         // TODO: It's faster to directly mutate these vecs instead of making
         // new ones and replacing them. Also if we're only appending new text we don't need to
         // rebuild vecs in entirety
         self.text_coords = coords;
-        self.text_colors = colors;
+        self.text_colors = colors_vertex;
 
         self.text_height = text_height;
         self.text_width = self.text_width.max(line_width);
     }
 
-    // fn queue_highlights(&mut self) {
+    fn queue_highlights(&mut self) -> Vec<&'theme Color> {
+        let src: Vec<u8> = self.editor.text_all().bytes().collect();
 
-    // }
+        // Assume chars are 1 byte long (ascii)
+        let mut text_colors: Vec<&Color> = vec![self.theme.fg(); src.len()];
+
+        // if src.len() >= 2 {
+        //     let highlight = self.theme.highlight(Highlight::Keyword).unwrap();
+        //     for i in 0..(2 * 6) {
+        //         text_colors[i] = highlight.clone();
+        //     }
+        // }
+
+        let highlights = self
+            .highlighter
+            .highlight(self.highlight_cfg, &src, None, |_| None)
+            .unwrap();
+
+        let mut color_stack: Vec<&Color> = Vec::new();
+
+        for event in highlights {
+            match event.unwrap() {
+                HighlightEvent::Source { start, end } => {
+                    if let Some(color) = color_stack.last() {
+                        (start..end).for_each(|i| {
+                            text_colors[i] = color;
+                        });
+                    }
+                }
+                HighlightEvent::HighlightStart(s) => {
+                    if let Some(highlight) = Highlight::from_u8(s.0 as u8) {
+                        color_stack.push(
+                            self.theme
+                                .highlight(highlight)
+                                .unwrap_or_else(|| self.theme.fg()),
+                        );
+                    } else {
+                        color_stack.push(self.theme.fg())
+                    }
+                }
+                HighlightEvent::HighlightEnd => {
+                    color_stack.pop();
+                }
+            }
+        }
+
+        text_colors
+    }
 }
 
-impl<'theme> Window<'theme> {
+impl<'theme, 'highlight> Window<'theme, 'highlight> {
     pub fn theme(&self) -> &ThemeType {
         self.theme
     }

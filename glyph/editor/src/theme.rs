@@ -13,6 +13,7 @@ pub struct TokyoNightStorm {
     fg: Color,
     bg: Color,
     cyan: Color,
+    green: Color,
 }
 
 impl TokyoNightStorm {
@@ -21,6 +22,7 @@ impl TokyoNightStorm {
             fg: Color::from_hex("#c0caf5"),
             bg: Color::from_hex("#24283b"),
             cyan: Color::from_hex("#7dcfff"),
+            green: Color::from_hex("#9ece6a"),
         }
     }
 }
@@ -54,7 +56,7 @@ impl Theme for TokyoNightStorm {
             Highlight::Punctuation => None,
             Highlight::PunctuationBracket => None,
             Highlight::PunctuationDelimiter => None,
-            Highlight::String => None,
+            Highlight::String => Some(&self.green),
             Highlight::StringSpecial => None,
             Highlight::Tag => None,
             Highlight::Type => None,
