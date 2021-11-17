@@ -233,7 +233,7 @@ impl Editor {
                 }
             }
             Move::Find(c) => {
-                self.find_line(*c, true);
+                self.cursor = self.find_line(*c, true).unwrap_or(self.cursor);
             }
             Move::ParagraphBegin => {
                 self.line = self.prev_paragraph();
