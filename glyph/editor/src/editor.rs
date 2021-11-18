@@ -6,7 +6,7 @@ use sdl2::{event::Event, keyboard::Keycode};
 use crate::{
     vim::{Cmd, NewLine},
     vim::{Move, Vim},
-    EditorEventResult,
+    EditorEvent,
 };
 
 #[derive(Copy, Clone)]
@@ -73,7 +73,7 @@ impl Editor {
         Editor::with_text(None)
     }
 
-    pub fn event(&mut self, event: Event) -> EditorEventResult {
+    pub fn event(&mut self, event: Event) -> EditorEvent {
         // println!(
         //     "Abs={} Cursor={} Line={} Lines={:?}",
         //     self.pos(),
@@ -89,14 +89,14 @@ impl Editor {
                     ..
                 } => {
                     self.insert("  ");
-                    EditorEventResult::DrawText
+                    EditorEvent::DrawText
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => {
                     self.switch_mode(Mode::Normal);
-                    EditorEventResult::DrawCursor
+                    EditorEvent::DrawCursor
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::Backspace),
@@ -107,17 +107,17 @@ impl Editor {
                     ..
                 } => {
                     self.enter();
-                    EditorEventResult::DrawText
+                    EditorEvent::DrawText
                 }
                 Event::TextInput { text, .. } => {
                     if let Mode::Insert = self.mode {
                         self.insert(&text);
-                        EditorEventResult::DrawText
+                        EditorEvent::DrawText
                     } else {
-                        EditorEventResult::Nothing
+                        EditorEvent::Nothing
                     }
                 }
-                _ => EditorEventResult::Nothing,
+                _ => EditorEvent::Nothing,
             },
         }
     }
@@ -125,51 +125,47 @@ impl Editor {
 
 // This impl contains utilities for normal mode
 impl Editor {
-    fn normal_mode(&mut self, event: Event) -> EditorEventResult {
+    fn normal_mode(&mut self, event: Event) -> EditorEvent {
         match self.vim.event(event) {
-            None => EditorEventResult::Nothing,
+            None => EditorEvent::Nothing,
             Some(cmd) => self.handle_cmd(&cmd),
         }
     }
 
-    fn handle_cmd(&mut self, cmd: &Cmd) -> EditorEventResult {
+    fn handle_cmd(&mut self, cmd: &Cmd) -> EditorEvent {
         match cmd {
             Cmd::SwitchMode => {
                 self.switch_mode(Mode::Insert);
-                EditorEventResult::DrawCursor
+                EditorEvent::DrawCursor
             }
             Cmd::Repeat { count, cmd } => {
-                if *count == 1 {
-                    self.handle_cmd(cmd)
-                } else {
-                    let mut ret = EditorEventResult::DrawCursor;
-                    for _ in 0..*count {
-                        ret = self.handle_cmd(cmd);
-                    }
-                    ret
+                let mut ret = EditorEvent::DrawCursor;
+                for _ in 0..*count {
+                    ret = self.handle_cmd(cmd);
                 }
+                ret
             }
             Cmd::Delete(None) => {
                 self.delete_line(self.line);
-                EditorEventResult::DrawText
+                EditorEvent::DrawText
             }
             Cmd::Delete(Some(mv)) => {
                 self.delete_mv(mv);
-                EditorEventResult::DrawText
+                EditorEvent::DrawText
             }
             Cmd::Change(None) => {
                 self.switch_mode(Mode::Insert);
                 self.delete_line(self.line);
-                EditorEventResult::DrawText
+                EditorEvent::DrawText
             }
             Cmd::Change(Some(mv)) => {
                 self.switch_mode(Mode::Insert);
                 self.delete_mv(mv);
-                EditorEventResult::DrawText
+                EditorEvent::DrawText
             }
             Cmd::Move(mv) => {
                 self.movement(mv);
-                EditorEventResult::DrawCursor
+                EditorEvent::DrawCursor
             }
             Cmd::NewLine(NewLine { up, switch_mode }) => {
                 if *switch_mode {
@@ -182,7 +178,7 @@ impl Editor {
                     self.new_line_before();
                 }
 
-                EditorEventResult::DrawText
+                EditorEvent::DrawText
             }
             Cmd::SwitchMove(mv) => {
                 self.switch_mode(Mode::Insert);
@@ -191,7 +187,7 @@ impl Editor {
                 if self.movement(mv) {
                     self.move_pos(usize::MAX);
                 }
-                EditorEventResult::DrawCursor
+                EditorEvent::DrawCursor
             }
             r => todo!("Unimplemented: {:?}", r),
         }
@@ -276,9 +272,9 @@ impl Editor {
         self.lines[self.line] += text.len() as u32;
     }
 
-    fn backspace(&mut self) -> EditorEventResult {
+    fn backspace(&mut self) -> EditorEvent {
         if self.cursor == 0 && self.line == 0 {
-            return EditorEventResult::Nothing;
+            return EditorEvent::Nothing;
         }
 
         if self.text.len_chars() > 0 {
@@ -296,7 +292,7 @@ impl Editor {
         } else {
             0
         };
-        EditorEventResult::DrawText
+        EditorEvent::DrawText
     }
 
     /// Delete chars in a range.
@@ -841,7 +837,7 @@ mod tests {
             editor.up(1);
             editor.left(1);
 
-            assert_eq!(editor.backspace(), EditorEventResult::DrawText);
+            assert_eq!(editor.backspace(), EditorEvent::DrawText);
             assert_eq!(editor.lines, vec![4, 1]);
         }
 

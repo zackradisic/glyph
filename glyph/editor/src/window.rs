@@ -14,7 +14,7 @@ use syntax::tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, High
 use syntax::Highlight;
 
 use crate::{
-    atlas::Atlas, Color, Editor, EditorEventResult, EventResult, GLProgram, Shader, ThemeType,
+    atlas::Atlas, Color, Editor, EditorEvent, EventResult, GLProgram, Shader, ThemeType,
     SCREEN_HEIGHT, SCREEN_WIDTH,
 };
 
@@ -25,8 +25,8 @@ struct Point {
     s: f32,
     t: f32,
 }
-const SX: f32 = 1.0 / SCREEN_WIDTH as f32;
-const SY: f32 = 1.0 / SCREEN_HEIGHT as f32;
+const SX: f32 = 0.7 / SCREEN_WIDTH as f32;
+const SY: f32 = 0.7 / SCREEN_HEIGHT as f32;
 
 pub struct Window<'theme, 'highlight> {
     // Graphics
@@ -63,9 +63,6 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
         let cursor_shader = CursorShaderProgram::default();
 
         let highlighter = Highlighter::new();
-
-        let f = syntax::RUST_CFG.names();
-        println!("HIGHLIGHT NAMES: {:#?}", f);
 
         Self {
             atlas,
@@ -104,12 +101,12 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                 EventResult::Draw
             }
             _ => match self.editor.event(event) {
-                EditorEventResult::DrawText => {
+                EditorEvent::DrawText => {
                     self.last_stroke = time;
                     self.render_text();
                     EventResult::Draw
                 }
-                EditorEventResult::DrawCursor => {
+                EditorEvent::DrawCursor => {
                     self.queue_cursor();
                     EventResult::Draw
                 }
@@ -333,12 +330,20 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
 
             // Skip glyphs that have no pixels
             if width == 0.0 || height == 0.0 {
-                if ch == '\n' {
-                    y -= self.atlas.max_h * sy;
-                    text_height += self.atlas.max_h;
-                    self.text_height = self.text_height.max(line_width);
-                    line_width = 0.0;
-                    x = starting_x;
+                match ch as u8 {
+                    // Tab
+                    9 => {
+                        x += self.atlas.max_w * sy * 4f32;
+                    }
+                    // New line
+                    10 => {
+                        y -= self.atlas.max_h * sy;
+                        text_height += self.atlas.max_h;
+                        self.text_height = self.text_height.max(line_width);
+                        line_width = 0.0;
+                        x = starting_x;
+                    }
+                    _ => {}
                 }
                 continue;
             }

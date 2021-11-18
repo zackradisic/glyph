@@ -236,9 +236,11 @@ dependencies = [
  "macros",
  "once_cell",
  "tree-sitter",
+ "tree-sitter-go",
  "tree-sitter-highlight",
  "tree-sitter-javascript",
  "tree-sitter-rust",
+ "tree-sitter-typescript",
 ]
 
 [[package]]
@@ -270,6 +272,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-go"
+version = "0.19.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71967701c8214be4aa77e0260e98361e6fd71ceec1d9d03abb37a22c9f60d0ff"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
 name = "tree-sitter-highlight"
 version = "0.20.0"
 dependencies = [
@@ -291,6 +303,16 @@ dependencies = [
 [[package]]
 name = "tree-sitter-rust"
 version = "0.19.1"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
+
+[[package]]
+name = "tree-sitter-typescript"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8935efd97c92067c9b2b6d7acb647607590996ba80f3a7be09a197f9c1fdab73"
 dependencies = [
  "cc",
  "tree-sitter",

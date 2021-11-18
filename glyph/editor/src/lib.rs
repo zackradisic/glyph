@@ -22,7 +22,7 @@ pub enum EventResult {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum EditorEventResult {
+pub enum EditorEvent {
     Nothing,
     DrawText,
     DrawCursor,
