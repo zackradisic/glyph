@@ -1,5 +1,9 @@
 use core::time;
-use std::{ffi::CStr, fs};
+use std::{
+    ffi::CStr,
+    fs,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use glyph::{EventResult, Window, SCREEN_HEIGHT, SCREEN_WIDTH, TOKYO_NIGHT_STORM};
 
@@ -62,6 +66,12 @@ fn main() {
     let mut end: u64;
     let mut elapsed: u64;
 
+    let mut frames: u128 = 0;
+    let mut start_now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards!")
+        .as_millis();
+
     'running: loop {
         start = timer.performance_counter();
         unsafe {
@@ -73,20 +83,41 @@ fn main() {
             gl::Clear(gl::COLOR_BUFFER_BIT);
         }
 
+        let mut draw = false;
         for event in event_pump.poll_iter() {
             match editor_window.event(event, timer.ticks()) {
                 EventResult::Quit => break 'running,
-                EventResult::Draw | EventResult::Nothing => {}
+                EventResult::Draw | EventResult::Nothing => {
+                    draw = true;
+                }
             }
         }
 
-        editor_window.frame(timer.ticks());
-        window.gl_swap_window();
+        frames += 1;
+        if draw {
+            editor_window.frame(timer.ticks());
+            window.gl_swap_window();
+        }
 
         end = timer.performance_counter();
         elapsed = ((end - start) / timer.performance_frequency()) * 1000;
 
-        std::thread::sleep(time::Duration::from_millis(16/*.666*/ - elapsed));
+        match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Err(_) => {}
+            Ok(time) => {
+                let ms = time.as_millis();
+                if ms - start_now > 5000 {
+                    println!(
+                        "FPS: {}",
+                        frames as f64 / ((time.as_millis() - start_now) as f64 / 1000.0)
+                    );
+                    frames = 0;
+                    start_now = ms;
+                }
+            }
+        }
+
+        std::thread::sleep(time::Duration::from_millis(8/*.666*/ - elapsed));
         // std::thread::sleep(time::Duration::from_millis(1000));
     }
 }
