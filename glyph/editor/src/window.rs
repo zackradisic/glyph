@@ -25,8 +25,8 @@ struct Point {
     s: f32,
     t: f32,
 }
-const SX: f32 = 0.8 / SCREEN_WIDTH as f32;
-const SY: f32 = 0.8 / SCREEN_HEIGHT as f32;
+const SX: f32 = 1.0 / SCREEN_WIDTH as f32;
+const SY: f32 = 1.0 / SCREEN_HEIGHT as f32;
 
 pub struct Window<'theme, 'highlight> {
     // Graphics
@@ -273,11 +273,9 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
             gl::Uniform1f(self.cursor_shader.uniform_time, ticks_ms as f32 / 1000.0);
         }
 
-        let mut vbo: GLuint = 0;
         let attrib_ptr = self.cursor_shader.attrib_apos;
         unsafe {
-            gl::GenBuffers(1, &mut vbo);
-            gl::BindBuffer(gl::ARRAY_BUFFER, vbo);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.cursor_shader.vbo);
 
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
             gl::BlendEquation(gl::FUNC_SUBTRACT);
@@ -406,6 +404,8 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
     }
 
     fn queue_highlights(&mut self) -> Vec<&'theme Color> {
+        // TODO: Rope buffer is very inexpensive to clone (taking O(1) time),
+        // so we should just do that here.
         let src: Vec<u8> = self.editor.text_all().bytes().collect();
 
         // Assume chars are 1 byte long (ascii)
@@ -524,6 +524,7 @@ pub struct CursorShaderProgram {
     uniform_laststroke: GLint,
     uniform_is_blinking: GLint,
     attrib_apos: GLuint,
+    vbo: GLuint,
 }
 
 impl CursorShaderProgram {
@@ -543,6 +544,9 @@ impl CursorShaderProgram {
 
         let program = GLProgram::from_shaders(&shaders).unwrap();
 
+        let mut vbo: GLuint = 0;
+        unsafe { gl::GenBuffers(1, &mut vbo as *mut GLuint) }
+
         Self {
             attrib_apos: program.attrib("aPos").unwrap() as u32,
             attrib_ytranslate: program.attrib("y_translate").unwrap() as u32,
@@ -551,6 +555,7 @@ impl CursorShaderProgram {
             uniform_laststroke: program.uniform("last_stroke").unwrap(),
             uniform_is_blinking: program.uniform("is_blinking").unwrap(),
             program,
+            vbo,
         }
     }
 
