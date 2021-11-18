@@ -147,25 +147,25 @@ impl Atlas {
                     g.bitmap().width() as i32,
                     g.bitmap().rows() as i32,
                     gl::ALPHA,
-                    // gl::RED,
                     gl::UNSIGNED_BYTE,
                     g.bitmap().buffer().as_ptr() as *const GLvoid,
                 );
             }
 
             glyphs[i] = Glyph {
-                advance_x: (g.advance().x >> 6) as f32,
-                advance_y: (g.advance().y >> 6) as f32,
                 bitmap_w: g.bitmap().width() as f32,
                 bitmap_h: g.bitmap().rows() as f32,
                 bitmap_l: g.bitmap_left() as f32,
                 bitmap_t: g.bitmap_top() as f32,
                 tx: ox as f32 / w as f32,
                 ty: oy as f32 / h as f32,
+                // 1 unit = 1/64 pixels so bitshift
+                // by 6 to get advance in pixels
+                advance_x: (g.advance().x >> 6) as f32,
+                advance_y: (g.advance().y >> 6) as f32,
             };
 
             rowh = std::cmp::max(rowh, g.bitmap().rows() as u32);
-            // ox += g.bitmap().width() + 1;
             ox += g.bitmap().width() + 1;
         }
 
