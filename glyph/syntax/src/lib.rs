@@ -31,6 +31,34 @@ make_highlights!(
     "variable.parameter"
 );
 
+pub static TS_CFG: Lazy<HighlightConfiguration> = Lazy::new(|| {
+    let mut cfg = HighlightConfiguration::new(
+        tree_sitter_typescript::language_typescript(),
+        tree_sitter_typescript::HIGHLIGHT_QUERY,
+        "",
+        tree_sitter_typescript::LOCALS_QUERY,
+    )
+    .unwrap();
+
+    cfg.configure(HIGHLIGHTS);
+
+    cfg
+});
+
+pub static GO_CFG: Lazy<HighlightConfiguration> = Lazy::new(|| {
+    let mut cfg = HighlightConfiguration::new(
+        tree_sitter_go::language(),
+        tree_sitter_go::HIGHLIGHT_QUERY,
+        "",
+        "",
+    )
+    .unwrap();
+
+    cfg.configure(HIGHLIGHTS);
+
+    cfg
+});
+
 pub static JS_CFG: Lazy<HighlightConfiguration> = Lazy::new(|| {
     let mut cfg = HighlightConfiguration::new(
         tree_sitter_javascript::language(),
