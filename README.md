@@ -1,4 +1,6 @@
+![Header image](images/rust.png)
 # Glyph
+
 
 This is my personal text editor that I am building for fun and to get more familiar with OpenGL.
 
