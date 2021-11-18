@@ -277,8 +277,8 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
         unsafe {
             gl::BindBuffer(gl::ARRAY_BUFFER, self.cursor_shader.vbo);
 
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
-            gl::BlendEquation(gl::FUNC_SUBTRACT);
+            // gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
+            // gl::BlendEquation(gl::FUNC_SUBTRACT);
 
             gl::BufferData(
                 gl::ARRAY_BUFFER,
