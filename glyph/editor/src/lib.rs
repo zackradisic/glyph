@@ -18,6 +18,7 @@ mod window;
 pub enum EventResult {
     Nothing,
     Draw,
+    Scroll,
     Quit,
 }
 

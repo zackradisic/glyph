@@ -21,7 +21,7 @@ fn main() {
     let video_subsystem = sdl_ctx.video().unwrap();
     let timer = sdl_ctx.timer().unwrap();
 
-    let window = video_subsystem
+    let mut window = video_subsystem
         .window("glyph", SCREEN_WIDTH, SCREEN_HEIGHT)
         .resizable()
         .allow_highdpi()
@@ -72,6 +72,8 @@ fn main() {
         .expect("Time went backwards!")
         .as_millis();
 
+    let mut start_capturing = false;
+
     'running: loop {
         start = timer.performance_counter();
         unsafe {
@@ -84,11 +86,15 @@ fn main() {
         }
 
         let mut draw = false;
+        let mut scroll = false;
         for event in event_pump.poll_iter() {
             match editor_window.event(event, timer.ticks()) {
                 EventResult::Quit => break 'running,
                 EventResult::Draw | EventResult::Nothing => {
                     draw = true;
+                }
+                EventResult::Scroll => {
+                    scroll = true;
                 }
             }
         }
@@ -96,6 +102,9 @@ fn main() {
         frames += 1;
         if draw {
             editor_window.frame(timer.ticks());
+            window.gl_swap_window();
+        } else if scroll {
+            editor_window.frame_scroll(timer.ticks());
             window.gl_swap_window();
         }
 
@@ -106,13 +115,18 @@ fn main() {
             Err(_) => {}
             Ok(time) => {
                 let ms = time.as_millis();
-                if ms - start_now > 5000 {
-                    println!(
-                        "FPS: {}",
-                        frames as f64 / ((time.as_millis() - start_now) as f64 / 1000.0)
-                    );
-                    frames = 0;
-                    start_now = ms;
+                if start_capturing {
+                    if ms - start_now > 1000 {
+                        let _ = window.set_title(&format!(
+                            "glyph — {:.1$} FPS",
+                            frames as f64 / ((time.as_millis() - start_now) as f64 / 1000.0),
+                            3
+                        ));
+                        frames = 0;
+                        start_now = ms;
+                    }
+                } else if ms - start_now > 5000 {
+                    start_capturing = true;
                 }
             }
         }

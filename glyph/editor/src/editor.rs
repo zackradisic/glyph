@@ -568,6 +568,21 @@ impl Editor {
     }
 
     #[inline]
+    pub fn lines(&self) -> &[u32] {
+        &self.lines
+    }
+
+    #[inline]
+    pub fn set_line(&mut self, pos: usize) {
+        self.line = pos
+    }
+
+    #[inline]
+    pub fn incr_line(&mut self, pos: i32) {
+        self.line += pos as usize;
+    }
+
+    #[inline]
     fn len(&self) -> usize {
         self.text.len_chars()
     }

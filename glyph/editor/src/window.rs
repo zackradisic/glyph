@@ -25,8 +25,11 @@ struct Point {
     s: f32,
     t: f32,
 }
-const SX: f32 = 0.7 / SCREEN_WIDTH as f32;
-const SY: f32 = 0.7 / SCREEN_HEIGHT as f32;
+const SX: f32 = 0.8 / SCREEN_WIDTH as f32;
+const SY: f32 = 0.8 / SCREEN_HEIGHT as f32;
+
+const START_X: f32 = -1f32 + 8f32 * SX;
+const START_Y: f32 = 1f32 - 50f32 * SY;
 
 pub struct Window<'theme, 'highlight> {
     // Graphics
@@ -49,6 +52,8 @@ pub struct Window<'theme, 'highlight> {
     // Syntax highlighting
     highlighter: Highlighter,
     highlight_cfg: &'highlight Lazy<HighlightConfiguration>,
+    text_changed: bool,
+    cursor_changed: bool,
 }
 
 impl<'theme, 'highlight> Window<'theme, 'highlight> {
@@ -80,6 +85,8 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
             theme,
             highlighter,
             highlight_cfg: &syntax::RUST_CFG,
+            text_changed: false,
+            cursor_changed: false,
         }
     }
 
@@ -95,18 +102,21 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                 if x.abs() > y.abs() {
                     self.scroll_x(x as f32 * -4.0);
                 } else {
-                    self.scroll_y(y as f32 * 8.0);
+                    self.scroll_y(y as f32);
                 }
-                self.render_text();
-                EventResult::Draw
+                self.queue_cursor();
+                EventResult::Scroll
             }
             _ => match self.editor.event(event) {
                 EditorEvent::DrawText => {
+                    self.text_changed = true;
                     self.last_stroke = time;
                     self.render_text();
                     EventResult::Draw
                 }
                 EditorEvent::DrawCursor => {
+                    self.cursor_changed = true;
+                    self.adjust_scroll();
                     self.queue_cursor();
                     EventResult::Draw
                 }
@@ -118,20 +128,32 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
 
 // This impl contains utilities
 impl<'theme, 'highlight> Window<'theme, 'highlight> {
-    fn scroll_y(&mut self, amount: f32) {
-        match amount > 0.0 {
+    fn scroll_y(&mut self, mut amount: f32) {
+        let pix_amount = amount * self.atlas.max_h;
+        amount *= -1.0;
+        match pix_amount > 0.0 {
+            // Scrolling up
             true => {
-                if self.y_offset + amount >= 0.0 {
+                if self.y_offset + pix_amount >= 0.0 {
                     self.y_offset = 0.0;
                 } else {
-                    self.y_offset += amount;
+                    self.y_offset += pix_amount;
+                    self.editor.incr_line(amount as i32)
                 }
             }
+            // Scrolling down
             false => {
-                if -1.0 * (self.y_offset + amount) >= self.text_height {
+                if -1.0 * (self.y_offset + pix_amount) >= self.text_height {
                     self.y_offset = self.text_height * -1.0;
+                    let len = self.editor.lines().len();
+                    if len == 0 {
+                        self.editor.incr_line(0)
+                    } else {
+                        self.editor.set_line(len - 1);
+                    }
                 } else {
-                    self.y_offset += amount;
+                    self.y_offset += pix_amount;
+                    self.editor.incr_line(amount as i32)
                 }
             }
         }
@@ -160,6 +182,7 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
 // This impl contains graphics functions
 impl<'theme, 'highlight> Window<'theme, 'highlight> {
     pub fn render_text(&mut self) {
+        self.adjust_scroll();
         self.queue_cursor();
         let colors = self.queue_highlights();
         self.queue_text(colors, -1f32 + 8f32 * SX, 1f32 - 50f32 * SY, SX, SY);
@@ -202,7 +225,95 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
         ];
     }
 
-    pub fn frame(&self, ticks_ms: u32) {
+    pub fn frame_scroll(&mut self, ticks_ms: u32) {
+        self.text_shader.set_used();
+
+        // Draw text
+        unsafe {
+            gl::VertexAttrib1f(self.text_shader.attrib_ytranslate, SY * self.y_offset);
+            gl::VertexAttrib1f(self.text_shader.attrib_xtranslate, self.x_offset * SX);
+
+            // Use the texture containing the atlas
+            gl::BindTexture(gl::TEXTURE_2D, self.atlas.tex);
+            gl::Uniform1i(self.text_shader.uniform_tex, 0);
+
+            // Set up the VBO for our vertex data
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.text_shader.vbo);
+            gl::VertexAttribPointer(
+                self.text_shader.attrib_coord,
+                4,
+                gl::FLOAT,
+                gl::FALSE,
+                0,
+                null(),
+            );
+            gl::EnableVertexAttribArray(self.text_shader.attrib_coord);
+
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.text_shader.vbo_color);
+            gl::VertexAttribPointer(
+                self.text_shader.attrib_v_color,
+                4,
+                gl::FLOAT,
+                gl::FALSE,
+                0,
+                null(),
+            );
+            gl::EnableVertexAttribArray(self.text_shader.attrib_v_color);
+
+            gl::DrawArrays(gl::TRIANGLES, 0, self.text_coords.len() as i32);
+            gl::DisableVertexAttribArray(self.text_shader.attrib_v_color);
+            gl::DisableVertexAttribArray(self.text_shader.attrib_coord);
+        }
+
+        // Draw cursor
+        self.cursor_shader.set_used();
+        unsafe {
+            gl::VertexAttrib1f(self.cursor_shader.attrib_ytranslate, self.y_offset * SY);
+            gl::VertexAttrib1f(self.cursor_shader.attrib_xtranslate, self.x_offset * SX);
+            gl::Uniform1f(
+                self.cursor_shader.uniform_laststroke,
+                self.last_stroke as f32 / 1000.0,
+            );
+            gl::Uniform1i(
+                self.cursor_shader.uniform_is_blinking,
+                if self.editor.is_insert() { 1 } else { 0 },
+            );
+            gl::Uniform1f(self.cursor_shader.uniform_time, ticks_ms as f32 / 1000.0);
+        }
+
+        let attrib_ptr = self.cursor_shader.attrib_apos;
+        unsafe {
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.cursor_shader.vbo);
+
+            // gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
+            // gl::BlendEquation(gl::FUNC_SUBTRACT);
+
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (self.cursor_coords.len() * mem::size_of::<f32>()) as isize,
+                self.cursor_coords.as_ptr() as *const c_void,
+                gl::DYNAMIC_DRAW,
+            );
+
+            gl::VertexAttribPointer(
+                attrib_ptr,
+                3,
+                gl::FLOAT,
+                gl::FALSE,
+                3 * mem::size_of::<f32>() as i32,
+                null(),
+            );
+            gl::EnableVertexAttribArray(0);
+            gl::DrawArrays(gl::TRIANGLES, 0, 6);
+            gl::DisableVertexAttribArray(0);
+
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+            gl::BlendEquation(gl::FUNC_ADD);
+        }
+    }
+
+    pub fn frame(&mut self, ticks_ms: u32) {
         self.text_shader.set_used();
 
         // Draw text
@@ -339,7 +450,7 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                     10 => {
                         y -= self.atlas.max_h * sy;
                         text_height += self.atlas.max_h;
-                        self.text_height = self.text_height.max(line_width);
+                        self.text_height = self.text_height.max(text_height);
                         line_width = 0.0;
                         x = starting_x;
                     }
@@ -451,11 +562,28 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
 
         text_colors
     }
+
+    fn adjust_scroll(&mut self) {
+        let oy = self.line_y_offset(self.editor.line());
+        let scrolled_h = SCREEN_HEIGHT as f32 * 2.0 + (self.y_offset * -1.0);
+
+        // Multiply by two because retina display on Mac
+        if oy >= scrolled_h || oy < self.y_offset * -1.0 {
+            self.y_offset = oy * -1.0;
+        }
+    }
 }
 
+// This impl contains small utilities
 impl<'theme, 'highlight> Window<'theme, 'highlight> {
     pub fn theme(&self) -> &ThemeType {
         self.theme
+    }
+
+    // Get the y offset (scroll pos) for the given line
+    #[inline]
+    fn line_y_offset(&self, line: usize) -> f32 {
+        (self.atlas.max_h as f32 * line as f32) - START_Y
     }
 }
 
