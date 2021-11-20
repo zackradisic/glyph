@@ -1,3 +1,5 @@
+#![feature(option_result_unwrap_unchecked)]
+
 use once_cell::sync::Lazy;
 
 pub use atlas::*;

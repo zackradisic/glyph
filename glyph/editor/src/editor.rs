@@ -197,7 +197,9 @@ impl Editor {
     /// and stopped).
     fn movement(&mut self, mv: &Move) -> bool {
         match mv {
-            Move::Word(skip_punctuation) => self.next_word(*skip_punctuation),
+            Move::Word(skip_punctuation) => {
+                self.next_word(self.line, self.cursor, *skip_punctuation, false)
+            }
             Move::Start => {
                 self.cursor = 0;
                 self.line = 0;
@@ -247,6 +249,8 @@ impl Editor {
 // This impl contains text changing utilities
 impl Editor {
     fn delete_mv(&mut self, mv: &Move) {
+        let cursor = self.cursor;
+        let line = self.line;
         let start = self.pos();
         let truncated_eol = self.movement(mv);
         let mut end = self.pos();
@@ -260,6 +264,11 @@ impl Editor {
             Ordering::Less => self.delete_range(start..end),
             Ordering::Greater => self.delete_range(end..start),
         }
+
+        // Return cursor back to starting position
+        // TODO: This breaks if we delete backwards for example `d{`
+        self.cursor = cursor;
+        self.line = line;
     }
 
     fn insert(&mut self, text: &str) {
@@ -344,6 +353,20 @@ impl Editor {
 
     /// Insert a new line and splitting the current one based on the cursor position
     fn enter(&mut self) {
+        match self.lines[self.line] {
+            0 => {
+                if self.cursor == 0 {
+                    self.new_line();
+                    return;
+                }
+            }
+            r => {
+                if self.cursor == r as usize {
+                    self.new_line();
+                    return;
+                }
+            }
+        }
         let pos = self.pos();
         self.text.insert(pos, "\n");
 
@@ -361,59 +384,177 @@ impl Editor {
         self.cursor = 0;
     }
 
+    fn add_whitespace(&mut self, pos: usize, count: usize) {
+        for i in 0..count {
+            self.text.insert_char(pos + i, ' ');
+        }
+    }
+
     // Insert a new line
     fn new_line(&mut self) {
-        let pos = self.line_pos() + self.lines[self.line] as usize;
-        self.text.insert(pos, "\n");
-        self.cursor = 0;
+        let is_last = self.line == self.lines.len() - 1;
+        let mut pos =
+            self.line_pos() + self.lines[self.line] as usize + if is_last { 0 } else { 1 };
+        if is_last {
+            self.text.insert(pos, "\n");
+            pos += 1;
+        }
+        let count = self
+            .text
+            .line(self.line)
+            .chars()
+            .enumerate()
+            .find_map(|(i, c)| if c != ' ' { Some(i) } else { None })
+            .unwrap_or(0);
+        self.add_whitespace(pos, count);
+        if !is_last {
+            self.text.insert(pos + count, "\n");
+        }
 
+        self.cursor = count;
         self.line += 1;
 
         if self.line >= self.lines.len() {
-            self.lines.push(0)
+            self.lines.push(count as u32)
         } else {
-            self.lines.insert(self.line, 0);
+            self.lines.insert(self.line, count as u32);
         }
     }
 
     fn new_line_before(&mut self) {
         let pos = self.line_pos();
-        self.text.insert(if pos == 0 { 0 } else { pos - 1 }, "\n");
-        self.cursor = 0;
+        // The new line character of previous line
+        let pos = if pos == 0 { 0 } else { pos };
+
+        let count = self
+            .text
+            .line(self.line)
+            .chars()
+            .enumerate()
+            .find_map(|(i, c)| if c != ' ' { Some(i) } else { None })
+            .unwrap_or(0);
+
+        self.cursor = count;
+
+        self.add_whitespace(pos, count);
+        self.text.insert(pos + count, "\n");
 
         self.line = if self.line == 0 { 0 } else { self.line };
 
-        self.lines.insert(self.line, 0);
+        self.lines.insert(self.line, count as u32);
     }
 }
 
 // This impl contains movement utilities
 impl Editor {
     #[inline]
-    fn next_word(&mut self, _skip_punctuation: bool) {
-        // TODO: Skip punctuation
-        self.cursor = if self.lines[self.line] == 0 {
-            0
-        } else {
-            // TODO: This doesn't work for multiple spaces:
-            // `    HELLO`
-            // this will just move to the second space of hte line
-            self.text
-                .line(self.line)
-                .chars()
-                .into_iter()
-                .enumerate()
-                .skip(self.cursor)
-                .find(|(_, c)| *c == ' ')
-                .map(|(idx, _)| {
-                    if idx >= self.lines[self.line] as usize {
-                        self.lines[self.line] as usize - 1
+    fn next_word(
+        &mut self,
+        line: usize,
+        cursor: usize,
+        _skip_punctuation: bool,
+        match_first_word: bool,
+    ) {
+        let is_not_last = line < self.lines.len() - 1;
+        if self.lines[line] == 0 {
+            if is_not_last {
+                self.next_word(line + 1, 0, _skip_punctuation, true);
+            }
+            return;
+        }
+
+        let chars: Vec<char> = self.text.line(line).chars().collect();
+        let len = chars.len();
+
+        // let mut start = cursor;
+        let start = self
+            .text
+            .line(line)
+            .chars()
+            .enumerate()
+            .skip(cursor)
+            .find_map(|(i, c)| if c != ' ' { Some(i) } else { None });
+
+        if start.is_none() {
+            if is_not_last {
+                return self.next_word(line + 1, 0, _skip_punctuation, true);
+            }
+            return;
+        }
+
+        let mut start = unsafe { start.unwrap_unchecked() };
+
+        let mut end = start + 1;
+        if end >= len {
+            if is_not_last {
+                self.next_word(line + 1, 0, _skip_punctuation, true);
+            }
+            return;
+        }
+
+        let mut idxs: Vec<(usize, usize)> = Vec::new();
+        let mut searching_start = false;
+
+        while end < len && start < len {
+            if searching_start {
+                if chars[start] != ' ' {
+                    searching_start = false;
+                    end = start + 1;
+                } else {
+                    start += 1;
+                }
+            } else {
+                if chars[end] == ' ' {
+                    idxs.push((start, end));
+                    searching_start = true;
+                    start = end + 1;
+                }
+                end += 1;
+            }
+        }
+
+        if !searching_start {
+            idxs.push((start, end));
+        }
+
+        match idxs.len() {
+            // If no words on line move to first word of nex line
+            0 => {
+                if is_not_last {
+                    self.next_word(line + 1, 0, _skip_punctuation, true);
+                }
+            }
+            // If 1 words on line move to first word of next line if there are more lines,
+            // otherwise move to last char of word
+            1 => {
+                let (start, end) = idxs[0];
+                if cursor >= start && cursor < end {
+                    if is_not_last {
+                        self.next_word(line + 1, 0, _skip_punctuation, true);
                     } else {
-                        idx + 1
+                        self.cursor = end - 1;
+                        self.line = line;
                     }
-                })
-                .unwrap_or(self.cursor)
-        };
+                } else {
+                    self.cursor = start;
+                    self.line = line;
+                }
+            }
+            _ => {
+                let (start, end) = idxs[0];
+
+                if match_first_word {
+                    self.cursor = start;
+                    self.line = line;
+                } else if cursor >= start && cursor < end {
+                    self.cursor = idxs[1].0;
+                    self.line = line;
+                } else {
+                    self.cursor = start;
+                    self.line = line;
+                }
+            }
+        }
     }
 
     /// Return line of the previous paragraph
