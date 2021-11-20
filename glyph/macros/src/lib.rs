@@ -61,6 +61,7 @@ pub fn make_highlights(stream: TokenStream) -> TokenStream {
         ];
     };
     let enum_tokens = quote! {
+        #[derive(Debug)]
         pub enum Highlight {
             #enum_tree
         }

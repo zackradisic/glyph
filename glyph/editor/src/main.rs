@@ -5,7 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use glyph::{EventResult, Window, SCREEN_HEIGHT, SCREEN_WIDTH, TOKYO_NIGHT_STORM};
+use glyph::{EventResult, Window, GITHUB, SCREEN_HEIGHT, SCREEN_WIDTH, TOKYO_NIGHT_STORM};
 
 fn main() {
     #[cfg(debug_assertions)]
@@ -55,7 +55,7 @@ fn main() {
         gl::Clear(gl::COLOR_BUFFER_BIT);
     }
 
-    let mut editor_window = Window::new(filepath, &TOKYO_NIGHT_STORM);
+    let mut editor_window = Window::new(filepath, &GITHUB);
     editor_window.render_text();
     window.gl_swap_window();
 

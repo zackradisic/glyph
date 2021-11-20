@@ -76,3 +76,5 @@ pub type ThemeType = Lazy<Box<dyn Theme + Send + Sync>>;
 
 pub static TOKYO_NIGHT_STORM: Lazy<Box<dyn Theme + Send + Sync>> =
     Lazy::new(|| Box::new(TokyoNightStorm::new()));
+
+pub static GITHUB: Lazy<Box<dyn Theme + Send + Sync>> = Lazy::new(|| Box::new(GithubDark::new()));
