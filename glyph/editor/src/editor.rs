@@ -272,8 +272,6 @@ impl Editor {
     }
 
     fn insert(&mut self, text: &str) {
-        // TODO: This breaks if we move cursor beyond the lines we currently have,
-        // should we not make it possible to move cursor beyond text like in vim?
         let pos = self.pos();
 
         self.text.insert(pos, text);

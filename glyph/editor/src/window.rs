@@ -225,6 +225,7 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
         ];
     }
 
+    /// TODO: Merge this with `frame` before we shoot ourselves in the foot
     pub fn frame_scroll(&mut self, ticks_ms: u32) {
         self.text_shader.set_used();
 
