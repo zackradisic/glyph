@@ -1,18 +1,21 @@
-# Features
+# Roadmap
 
-# Scrolling beyond window size should move window to cursor
-Just calculate offset based on line number of cursor.
-
-## Cursor movements
-* Moving between lines should move cursor to first non-space character of the line.
-* Making new lines should make the line and place cursor on the same position, creating
-  additional whitespace characters.
+1. Implement MVP editing features
+    * Visual mode
+    * Finish other Vim movements (`B`, `b`, `E`, `e`, fix `f`/`F`)
+    * Undo/redo
+2. LSP support (at this point Glyph can replace my main editor)
+3. Other niceties
+    * File tree
+    * Vim surround
+    * Tab/status line
+    * Git diff & hunk viewer
 
 ## Resizing
 Seems simple enough, handle the SDL event and capture the updated size. Use this to
 update the global variables
 
-## Visual line
+## Visual mode
 Keep state on selection, start and pos. On the graphics side of things just an outline over the already existing points we create when queuing text seems easy to achieve. The color can be just have the opacity cranked
 down a bit.
 
