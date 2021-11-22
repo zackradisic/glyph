@@ -156,7 +156,8 @@ impl Vim {
                         "$" => self.cmd_stack.push(Token::LineEnd),
                         "{" => self.cmd_stack.push(Token::ParagraphBegin),
                         "}" => self.cmd_stack.push(Token::ParagraphEnd),
-                        "w" => self.cmd_stack.push(Token::Word(false)),
+                        "W" => self.cmd_stack.push(Token::Word(false)),
+                        "w" => self.cmd_stack.push(Token::Word(true)),
                         r => {
                             let c = r.chars().next().unwrap();
                             if c.is_numeric() {

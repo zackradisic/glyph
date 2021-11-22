@@ -450,13 +450,13 @@ impl Editor {
         &mut self,
         line: usize,
         cursor: usize,
-        _skip_punctuation: bool,
+        skip_punctuation: bool,
         match_first_word: bool,
     ) {
         let is_not_last = line < self.lines.len() - 1;
         if self.lines[line] == 0 {
             if is_not_last {
-                self.next_word(line + 1, 0, _skip_punctuation, true);
+                self.next_word(line + 1, 0, skip_punctuation, true);
             }
             return;
         }
@@ -471,11 +471,17 @@ impl Editor {
             .chars()
             .enumerate()
             .skip(cursor)
-            .find_map(|(i, c)| if c != ' ' { Some(i) } else { None });
+            .find_map(|(i, c)| {
+                if Editor::is_word_separator(c, skip_punctuation) {
+                    None
+                } else {
+                    Some(i)
+                }
+            });
 
         if start.is_none() {
             if is_not_last {
-                return self.next_word(line + 1, 0, _skip_punctuation, true);
+                return self.next_word(line + 1, 0, skip_punctuation, true);
             }
             return;
         }
@@ -485,7 +491,7 @@ impl Editor {
         let mut end = start + 1;
         if end >= len {
             if is_not_last {
-                self.next_word(line + 1, 0, _skip_punctuation, true);
+                self.next_word(line + 1, 0, skip_punctuation, true);
             }
             return;
         }
@@ -495,17 +501,17 @@ impl Editor {
 
         while end < len && start < len {
             if searching_start {
-                if chars[start] != ' ' {
+                if chars[start] == ' ' {
+                    start += 1;
+                } else {
                     searching_start = false;
                     end = start + 1;
-                } else {
-                    start += 1;
                 }
             } else {
-                if chars[end] == ' ' {
+                if Editor::is_word_separator(chars[end], skip_punctuation) {
                     idxs.push((start, end));
                     searching_start = true;
-                    start = end + 1;
+                    start = end;
                 }
                 end += 1;
             }
@@ -519,7 +525,7 @@ impl Editor {
             // If no words on line move to first word of nex line
             0 => {
                 if is_not_last {
-                    self.next_word(line + 1, 0, _skip_punctuation, true);
+                    self.next_word(line + 1, 0, skip_punctuation, true);
                 }
             }
             // If 1 words on line move to first word of next line if there are more lines,
@@ -528,7 +534,7 @@ impl Editor {
                 let (start, end) = idxs[0];
                 if cursor >= start && cursor < end {
                     if is_not_last {
-                        self.next_word(line + 1, 0, _skip_punctuation, true);
+                        self.next_word(line + 1, 0, skip_punctuation, true);
                     } else {
                         self.cursor = end - 1;
                         self.line = line;
@@ -770,6 +776,15 @@ impl Editor {
     #[inline]
     pub fn is_insert(&self) -> bool {
         matches!(self.mode, Mode::Insert)
+    }
+
+    fn is_word_separator(c: char, skip_punctuation: bool) -> bool {
+        match c {
+            ' ' => true,
+            '_' => false,
+            _ if skip_punctuation => !c.is_alphanumeric(),
+            _ => false,
+        }
     }
 }
 
