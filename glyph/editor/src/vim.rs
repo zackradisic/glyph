@@ -29,7 +29,8 @@ pub enum Move {
     Down,
     LineStart,
     LineEnd,
-    Find(char),
+    // Bool is true if find in reverse
+    Find(char, bool),
     ParagraphBegin,
     ParagraphEnd,
     Start,
@@ -47,6 +48,7 @@ pub enum Token {
     Change,
     Yank,
     Find,
+    FindReverse,
     Left,
     Right,
     Up,
@@ -101,10 +103,9 @@ impl Vim {
             Event::KeyDown {
                 keycode: Some(key), ..
             } => match key {
-                Keycode::H => self.cmd_stack.push(Token::Left),
-                Keycode::L => self.cmd_stack.push(Token::Right),
-                Keycode::J => self.cmd_stack.push(Token::Down),
-                Keycode::K => self.cmd_stack.push(Token::Up),
+                Keycode::Escape => {
+                    self.reset();
+                }
                 Keycode::Num0 | Keycode::Kp0 => {
                     match self.cmd_stack.last().cloned() {
                         Some(Token::Number(n)) => {
@@ -129,10 +130,19 @@ impl Vim {
                     self.parsing_find = false;
                 } else {
                     match text.as_str() {
+                        // Basic movement
+                        "h" => self.cmd_stack.push(Token::Left),
+                        "j" => self.cmd_stack.push(Token::Down),
+                        "k" => self.cmd_stack.push(Token::Up),
+                        "l" => self.cmd_stack.push(Token::Right),
                         // Ops
                         "d" => self.cmd_stack.push(Token::Delete),
                         "c" => self.cmd_stack.push(Token::Change),
                         "y" => self.cmd_stack.push(Token::Yank),
+                        "F" => {
+                            self.cmd_stack.push(Token::FindReverse);
+                            self.parsing_find = true
+                        }
                         "f" => {
                             self.cmd_stack.push(Token::Find);
                             self.parsing_find = true
@@ -233,7 +243,14 @@ impl Vim {
             }),
             Some(Token::Find) => {
                 if let Some(Token::Char(char)) = self.next() {
-                    Ok(Cmd::Move(Move::Find(*char)))
+                    Ok(Cmd::Move(Move::Find(*char, false)))
+                } else {
+                    Err(FailAction::Continue)
+                }
+            }
+            Some(Token::FindReverse) => {
+                if let Some(Token::Char(char)) = self.next() {
+                    Ok(Cmd::Move(Move::Find(*char, true)))
                 } else {
                     Err(FailAction::Continue)
                 }
@@ -275,7 +292,12 @@ impl Vim {
             }
             Some(Token::EndWord(skip_punctuation)) => Ok(Move::EndWord(skip_punctuation)),
             Some(Token::Find) => match self.next() {
-                Some(Token::Char(char)) => Ok(Move::Find(*char)),
+                Some(Token::Char(char)) => Ok(Move::Find(*char, false)),
+                Some(_) => Err(FailAction::Reset),
+                None => Err(FailAction::Continue),
+            },
+            Some(Token::FindReverse) => match self.next() {
+                Some(Token::Char(char)) => Ok(Move::Find(*char, true)),
                 Some(_) => Err(FailAction::Reset),
                 None => Err(FailAction::Continue),
             },
@@ -408,7 +430,7 @@ mod tests {
                     count: 2,
                     cmd: Box::new(Cmd::Delete(Some(Move::Repeat {
                         count: 2,
-                        mv: Box::new(Move::Find('e'))
+                        mv: Box::new(Move::Find('e', false))
                     })))
                 })
             );
@@ -439,7 +461,10 @@ mod tests {
 
             assert_eq!(vim.event(text_input("f")), None);
             assert!(vim.parsing_find);
-            assert_eq!(vim.event(text_input(";")), Some(Cmd::Move(Move::Find(';'))));
+            assert_eq!(
+                vim.event(text_input(";")),
+                Some(Cmd::Move(Move::Find(';', false)))
+            );
             is_reset(&mut vim);
         }
 
@@ -462,7 +487,7 @@ mod tests {
                 vim.event(text_input("k")),
                 Some(Cmd::Repeat {
                     count: 2,
-                    cmd: Box::new(Cmd::Move(Move::Find('k')))
+                    cmd: Box::new(Cmd::Move(Move::Find('k', false)))
                 })
             );
             is_reset(&mut vim);

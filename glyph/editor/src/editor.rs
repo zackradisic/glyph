@@ -254,8 +254,8 @@ impl Editor {
                     }
                 }
             }
-            Move::Find(c) => {
-                self.cursor = self.find_line(*c, true).unwrap_or(self.cursor);
+            Move::Find(c, reverse) => {
+                self.cursor = self.find_line(*c, !reverse).unwrap_or(self.cursor);
             }
             Move::ParagraphBegin => {
                 self.line = self.prev_paragraph();
@@ -681,18 +681,18 @@ impl Editor {
             self.text
                 .line(self.line)
                 .chars()
-                .skip(self.cursor)
+                .skip(self.cursor + 1)
                 .enumerate()
                 .find(|(_, c)| *c == char)
-                .map(|tup| tup.0)
+                .map(|(pos, _)| self.cursor + pos + 1)
         } else {
-            let mut chars = self.text.line(self.line).chars();
-            chars.reverse();
-            chars
-                .skip(self.cursor)
-                .enumerate()
-                .find(|(_, c)| *c == char)
-                .map(|tup| tup.0)
+            let chars: Vec<char> = self.text.line(self.line).chars().collect();
+            for i in (0..self.cursor).rev() {
+                if chars[i] == char {
+                    return Some(i);
+                }
+            }
+            None
         }
     }
 
