@@ -35,6 +35,8 @@ pub enum Move {
     Start,
     End,
     Word(bool),
+    BeginningWord(bool),
+    EndWord(bool),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -56,6 +58,8 @@ pub enum Token {
     Number(u16),
     Char(char),
     Word(bool),
+    BeginningWord(bool),
+    EndWord(bool),
 }
 
 #[derive(Debug, PartialEq)]
@@ -156,8 +160,12 @@ impl Vim {
                         "$" => self.cmd_stack.push(Token::LineEnd),
                         "{" => self.cmd_stack.push(Token::ParagraphBegin),
                         "}" => self.cmd_stack.push(Token::ParagraphEnd),
-                        "W" => self.cmd_stack.push(Token::Word(false)),
-                        "w" => self.cmd_stack.push(Token::Word(true)),
+                        "W" => self.cmd_stack.push(Token::Word(true)),
+                        "w" => self.cmd_stack.push(Token::Word(false)),
+                        "B" => self.cmd_stack.push(Token::BeginningWord(true)),
+                        "b" => self.cmd_stack.push(Token::BeginningWord(false)),
+                        "E" => self.cmd_stack.push(Token::EndWord(true)),
+                        "e" => self.cmd_stack.push(Token::EndWord(false)),
                         r => {
                             let c = r.chars().next().unwrap();
                             if c.is_numeric() {
@@ -262,6 +270,10 @@ impl Vim {
             Some(Token::Start) => Ok(Move::Start),
             Some(Token::End) => Ok(Move::End),
             Some(Token::Word(skip_punctuation)) => Ok(Move::Word(skip_punctuation)),
+            Some(Token::BeginningWord(skip_punctuation)) => {
+                Ok(Move::BeginningWord(skip_punctuation))
+            }
+            Some(Token::EndWord(skip_punctuation)) => Ok(Move::EndWord(skip_punctuation)),
             Some(Token::Find) => match self.next() {
                 Some(Token::Char(char)) => Ok(Move::Find(*char)),
                 Some(_) => Err(FailAction::Reset),

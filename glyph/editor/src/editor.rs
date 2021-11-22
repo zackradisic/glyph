@@ -6,7 +6,7 @@ use sdl2::{event::Event, keyboard::Keycode};
 use crate::{
     vim::{Cmd, NewLine},
     vim::{Move, Vim},
-    EditorEvent,
+    EditorEvent, MoveWord, MoveWordKind,
 };
 
 #[derive(Copy, Clone)]
@@ -197,9 +197,33 @@ impl Editor {
     /// and stopped).
     fn movement(&mut self, mv: &Move) -> bool {
         match mv {
-            Move::Word(skip_punctuation) => {
-                self.next_word(self.line, self.cursor, *skip_punctuation, false)
-            }
+            Move::Word(skip_punctuation) => self.next_word(
+                MoveWord {
+                    kind: MoveWordKind::Next,
+                    skip_punctuation: *skip_punctuation,
+                },
+                self.line,
+                self.cursor,
+                false,
+            ),
+            Move::BeginningWord(skip_punctuation) => self.next_word(
+                MoveWord {
+                    kind: MoveWordKind::Prev,
+                    skip_punctuation: *skip_punctuation,
+                },
+                self.line,
+                self.cursor,
+                false,
+            ),
+            Move::EndWord(skip_punctuation) => self.next_word(
+                MoveWord {
+                    kind: MoveWordKind::End,
+                    skip_punctuation: *skip_punctuation,
+                },
+                self.line,
+                self.cursor,
+                false,
+            ),
             Move::Start => {
                 self.cursor = 0;
                 self.line = 0;
@@ -445,57 +469,14 @@ impl Editor {
 
 // This impl contains movement utilities
 impl Editor {
-    #[inline]
-    fn next_word(
+    fn word_indicies(
         &mut self,
-        line: usize,
-        cursor: usize,
+        mut start: usize,
+        mut end: usize,
+        chars: Vec<char>,
         skip_punctuation: bool,
-        match_first_word: bool,
-    ) {
-        let is_not_last = line < self.lines.len() - 1;
-        if self.lines[line] == 0 {
-            if is_not_last {
-                self.next_word(line + 1, 0, skip_punctuation, true);
-            }
-            return;
-        }
-
-        let chars: Vec<char> = self.text.line(line).chars().collect();
+    ) -> Vec<(usize, usize)> {
         let len = chars.len();
-
-        // let mut start = cursor;
-        let start = self
-            .text
-            .line(line)
-            .chars()
-            .enumerate()
-            .skip(cursor)
-            .find_map(|(i, c)| {
-                if Editor::is_word_separator(c, skip_punctuation) {
-                    None
-                } else {
-                    Some(i)
-                }
-            });
-
-        if start.is_none() {
-            if is_not_last {
-                return self.next_word(line + 1, 0, skip_punctuation, true);
-            }
-            return;
-        }
-
-        let mut start = unsafe { start.unwrap_unchecked() };
-
-        let mut end = start + 1;
-        if end >= len {
-            if is_not_last {
-                self.next_word(line + 1, 0, skip_punctuation, true);
-            }
-            return;
-        }
-
         let mut idxs: Vec<(usize, usize)> = Vec::new();
         let mut searching_start = false;
 
@@ -521,11 +502,99 @@ impl Editor {
             idxs.push((start, end));
         }
 
+        idxs
+    }
+
+    fn next_word(&mut self, mv: MoveWord, line: usize, mut cursor: usize, match_first_word: bool) {
+        use MoveWordKind::*;
+        let is_not_last = match mv.kind {
+            Next | End => line < (self.lines.len() - 1),
+            Prev => line > 0,
+        };
+
+        if self.lines[line] == 0 {
+            if is_not_last {
+                match mv.kind {
+                    Next | End => self.next_word(mv, line + 1, 0, true),
+                    Prev => self.next_word(mv, line - 1, usize::MAX, true),
+                }
+            }
+            return;
+        }
+
+        let chars: Vec<char> = match mv.kind {
+            Next | End => self.text.line(line).chars().collect(),
+            Prev => {
+                let mut chars: Vec<char> = self.text.line(line).chars().collect();
+                chars.reverse();
+                chars
+            }
+        };
+        let len = chars.len();
+        if cursor > len {
+            cursor = len - 1;
+        }
+
+        let start = self
+            .text
+            .line(line)
+            .chars()
+            .enumerate()
+            .skip(if matches!(mv.kind, Prev) {
+                len - cursor
+            } else {
+                cursor
+            })
+            .find_map(|(i, c)| {
+                if Editor::is_word_separator(c, mv.skip_punctuation) {
+                    None
+                } else {
+                    Some(i)
+                }
+            });
+
+        if start.is_none() {
+            if is_not_last {
+                match mv.kind {
+                    Next | End => self.next_word(mv, line + 1, 0, true),
+                    Prev => self.next_word(mv, line - 1, usize::MAX, true),
+                };
+            }
+            return;
+        }
+
+        let start = unsafe { start.unwrap_unchecked() };
+
+        let end = start + 1;
+        if end >= len {
+            if is_not_last {
+                match mv.kind {
+                    Next | End => self.next_word(mv, line + 1, 0, true),
+                    Prev => self.next_word(mv, line - 1, usize::MAX, true),
+                };
+            }
+            return;
+        }
+
+        let idxs: Vec<(usize, usize)> = {
+            let idxs = self.word_indicies(start, end, chars, mv.skip_punctuation);
+            if matches!(mv.kind, Prev) {
+                idxs.into_iter()
+                    .map(|(start, end)| (len - end, len - start))
+                    .collect()
+            } else {
+                idxs
+            }
+        };
+
         match idxs.len() {
             // If no words on line move to first word of nex line
             0 => {
                 if is_not_last {
-                    self.next_word(line + 1, 0, skip_punctuation, true);
+                    match mv.kind {
+                        Next | End => self.next_word(mv, line + 1, 0, true),
+                        Prev => self.next_word(mv, line - 1, usize::MAX, true),
+                    }
                 }
             }
             // If 1 words on line move to first word of next line if there are more lines,
@@ -534,7 +603,10 @@ impl Editor {
                 let (start, end) = idxs[0];
                 if cursor >= start && cursor < end {
                     if is_not_last {
-                        self.next_word(line + 1, 0, skip_punctuation, true);
+                        match mv.kind {
+                            Next | End => self.next_word(mv, line + 1, 0, true),
+                            Prev => self.next_word(mv, line - 1, usize::MAX, true),
+                        }
                     } else {
                         self.cursor = end - 1;
                         self.line = line;
@@ -551,10 +623,23 @@ impl Editor {
                     self.cursor = start;
                     self.line = line;
                 } else if cursor >= start && cursor < end {
-                    self.cursor = idxs[1].0;
+                    self.cursor = if matches!(mv.kind, End) {
+                        let new = idxs[0].1 - 1;
+                        if self.cursor == new {
+                            idxs[1].1 - 1
+                        } else {
+                            new
+                        }
+                    } else {
+                        idxs[1].0
+                    };
                     self.line = line;
                 } else {
-                    self.cursor = start;
+                    self.cursor = if matches!(mv.kind, End) {
+                        end - 1
+                    } else {
+                        start
+                    };
                     self.line = line;
                 }
             }
@@ -782,7 +867,7 @@ impl Editor {
         match c {
             ' ' => true,
             '_' => false,
-            _ if skip_punctuation => !c.is_alphanumeric(),
+            _ if !skip_punctuation => !c.is_alphanumeric(),
             _ => false,
         }
     }

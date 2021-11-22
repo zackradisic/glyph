@@ -31,14 +31,15 @@ pub enum EditorEvent {
     DrawCursor,
 }
 
-pub enum EditorAction {
-    Up(u32),
-    Down(u32),
-    Delete(Delete),
+pub enum MoveWordKind {
+    Next,
+    Prev,
+    End,
 }
 
-pub enum Delete {
-    Line(u32),
+pub struct MoveWord {
+    pub kind: MoveWordKind,
+    pub skip_punctuation: bool,
 }
 
 #[repr(C)]
