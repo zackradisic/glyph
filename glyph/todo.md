@@ -33,6 +33,9 @@ This is counted as one insertion operation. If I hit undo, it will undo the enti
 of this behaviour because I like the granularity of undoing on a per word basis. If I wanted to undo the entire
 sentence this could easily be achieved through a vim command.
 
+todo:
+* undo/redo for basic editing (insert, backspace, enter)
+* undo/redo for vim commands
 
 ## Resizing
 Seems simple enough, handle the SDL event and capture the updated size. Use this to

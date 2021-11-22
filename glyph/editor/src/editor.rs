@@ -1,7 +1,6 @@
-use std::{cmp::Ordering, ops::Range};
-
 use ropey::{Rope, RopeSlice};
 use sdl2::{event::Event, keyboard::Keycode};
+use std::{cell::Cell, cmp::Ordering, ops::Range};
 
 use crate::{
     vim::{Cmd, NewLine},
@@ -13,6 +12,27 @@ use crate::{
 pub enum Mode {
     Insert,
     Normal,
+}
+
+#[derive(Clone, Debug)]
+pub enum Edit {
+    Insertion { start: Cell<usize>, str: Vec<char> },
+    Deletion { start: Cell<usize>, str: Vec<char> },
+}
+
+impl Edit {
+    pub fn invert(&self) -> Self {
+        match self {
+            Edit::Insertion { start, str } => Edit::Deletion {
+                start: Cell::new(start.get()),
+                str: str.clone(),
+            },
+            Edit::Deletion { start, str } => Edit::Insertion {
+                start: Cell::new(start.get()),
+                str: str.clone(),
+            },
+        }
+    }
 }
 
 pub struct Editor {
@@ -27,6 +47,10 @@ pub struct Editor {
     mode: Mode,
 
     vim: Vim,
+
+    had_space: bool,
+    pub edits: Vec<Edit>,
+    pub redos: Vec<Edit>,
 }
 
 fn text_to_lines(text: &str) -> Vec<u32> {
@@ -66,6 +90,9 @@ impl Editor {
             text,
             mode: Mode::Insert,
             vim: Vim::new(),
+            had_space: false,
+            edits: Vec::new(),
+            redos: Vec::new(),
         }
     }
 
@@ -134,6 +161,14 @@ impl Editor {
 
     fn handle_cmd(&mut self, cmd: &Cmd) -> EditorEvent {
         match cmd {
+            Cmd::Undo => {
+                self.undo();
+                EditorEvent::DrawText
+            }
+            Cmd::Redo => {
+                self.redo();
+                EditorEvent::DrawText
+            }
             Cmd::SwitchMode => {
                 self.switch_mode(Mode::Insert);
                 EditorEvent::DrawCursor
@@ -301,6 +336,32 @@ impl Editor {
         self.text.insert(pos, text);
         self.cursor += text.len();
         self.lines[self.line] += text.len() as u32;
+
+        let char = text.chars().next().unwrap();
+        match self.edits.last_mut() {
+            _ if self.had_space => {
+                self.edits.push(Edit::Insertion {
+                    start: Cell::new(pos),
+                    str: vec![char],
+                });
+                self.had_space = false;
+            }
+            Some(Edit::Insertion { str, .. }) => {
+                let is_space = text == " ";
+                str.push(char);
+                if is_space {
+                    self.had_space = true;
+                }
+            }
+            None | Some(Edit::Deletion { .. }) => self.edits.push(Edit::Insertion {
+                start: Cell::new(pos),
+                str: vec![char],
+            }),
+        }
+        // Invalidate redo stack if we make an edit
+        if !self.redos.is_empty() {
+            self.redos.clear()
+        }
     }
 
     fn backspace(&mut self) -> EditorEvent {
@@ -308,9 +369,14 @@ impl Editor {
             return EditorEvent::Nothing;
         }
 
-        if self.text.len_chars() > 0 {
-            self.text.remove(self.pos() - 1..self.pos());
-        }
+        let pos = self.pos();
+        let removed: Option<char> = if self.text.len_chars() > 0 {
+            let c = self.text.char(if pos == 0 { 0 } else { pos - 1 });
+            self.text.remove(pos - 1..pos);
+            Some(c)
+        } else {
+            None
+        };
         self.cursor = if self.cursor > 0 {
             self.lines[self.line] -= 1;
             self.cursor - 1
@@ -323,6 +389,23 @@ impl Editor {
         } else {
             0
         };
+        if let Some(c) = removed {
+            match self.edits.last_mut() {
+                Some(Edit::Deletion { start, str }) => {
+                    let val = start.get();
+                    if val > 0 {
+                        start.set(val - 1)
+                    }
+                    str.push(c)
+                }
+                None | Some(Edit::Insertion { .. }) => {
+                    self.edits.push(Edit::Deletion {
+                        start: Cell::new(pos - 1),
+                        str: vec![c],
+                    });
+                }
+            }
+        }
         EditorEvent::DrawText
     }
 
@@ -762,12 +845,45 @@ impl Editor {
     }
 }
 
+// This impl contains undo/redo utility functions
+impl Editor {
+    #[inline]
+    fn undo(&mut self) {
+        if let Some(edit) = self.edits.pop() {
+            let inversion = edit.invert();
+            self.redos.push(edit);
+            self.apply_edit(inversion)
+        }
+    }
+
+    #[inline]
+    fn redo(&mut self) {
+        if let Some(edit) = self.redos.pop() {
+            self.edits.push(edit.clone());
+            self.apply_edit(edit);
+        }
+    }
+
+    #[inline]
+    fn apply_edit(&mut self, edit: Edit) {
+        match edit {
+            Edit::Deletion { start, str } => {
+                let len = str.len();
+                let start = start.get();
+                self.text.remove(start..(start + len));
+            }
+            Edit::Insertion { start, str } => self
+                .text
+                .insert(start.get(), str.into_iter().collect::<String>().as_str()),
+        }
+    }
+}
+
 // This impl contains generic utility functions
 impl Editor {
     #[inline]
     fn switch_mode(&mut self, mode: Mode) {
         if let (Mode::Insert, Mode::Normal) = (self.mode, mode) {
-            println!("cursor={} count={}", self.cursor, self.lines[self.line]);
             // If we are switching from insert to normal mode and we are on the new-line character,
             // move it back since we disallow that in normal mode
             if self.cursor == self.lines[self.line] as usize && self.cursor > 0 {

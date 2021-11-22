@@ -55,7 +55,7 @@ fn main() {
         gl::Clear(gl::COLOR_BUFFER_BIT);
     }
 
-    let mut editor_window = Window::new(filepath, &GITHUB);
+    let mut editor_window = Window::new(filepath, &TOKYO_NIGHT_STORM);
     editor_window.render_text();
     window.gl_swap_window();
 

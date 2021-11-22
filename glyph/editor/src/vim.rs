@@ -10,6 +10,8 @@ pub enum Cmd {
     SwitchMove(Move),
     SwitchMode,
     NewLine(NewLine),
+    Undo,
+    Redo,
 }
 
 // 2 d f e
@@ -52,6 +54,8 @@ pub enum Token {
     Left,
     Right,
     Up,
+    Undo,
+    Redo,
     Down,
     LineStart,
     LineEnd,
@@ -139,6 +143,9 @@ impl Vim {
                         "d" => self.cmd_stack.push(Token::Delete),
                         "c" => self.cmd_stack.push(Token::Change),
                         "y" => self.cmd_stack.push(Token::Yank),
+                        "u" => self.cmd_stack.push(Token::Undo),
+                        "r" => self.cmd_stack.push(Token::Redo),
+                        // Movement
                         "F" => {
                             self.cmd_stack.push(Token::FindReverse);
                             self.parsing_find = true
@@ -147,7 +154,6 @@ impl Vim {
                             self.cmd_stack.push(Token::Find);
                             self.parsing_find = true
                         }
-                        // Movement
                         "g" => {
                             self.parsing_start = true;
                         }
@@ -234,6 +240,8 @@ impl Vim {
     fn parse_cmd(&mut self) -> Result<Cmd> {
         match self.next().cloned() {
             None => Err(FailAction::Continue),
+            Some(Token::Undo) => Ok(Cmd::Undo),
+            Some(Token::Redo) => Ok(Cmd::Redo),
             Some(Token::Delete) => self.parse_op(Token::Delete).map(Cmd::Delete),
             Some(Token::Change) => self.parse_op(Token::Change).map(Cmd::Change),
             Some(Token::Yank) => self.parse_op(Token::Yank).map(Cmd::Yank),
