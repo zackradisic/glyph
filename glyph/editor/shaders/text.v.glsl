@@ -8,7 +8,7 @@ varying vec4 v_color;
 
 void main(void) {
   mat4 aMat4 = mat4(1.0, 0.0, 0.0,  x_translate, 
-                    0.0, 1.0, 0.0,  y_translate * -1.0, 
+                    0.0, 1.0, 0.0,  (y_translate - (8.0/600.0)) * -1.0, 
                     0.0, 0.0, 1.0,  0.0,  
                     0.0, 0.0, 0.0,  1.0);
   
