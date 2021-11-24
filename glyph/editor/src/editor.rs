@@ -16,20 +16,26 @@ pub enum Mode {
 
 #[derive(Clone, Debug)]
 pub enum Edit {
-    Insertion { start: Cell<usize>, str: Vec<char> },
-    Deletion { start: Cell<usize>, str: Vec<char> },
+    Insertion { start: Cell<u32>, str_idx: u32 },
+    Deletion { start: Cell<u32>, str_idx: u32 },
 }
 
 impl Edit {
     pub fn invert(&self) -> Self {
         match self {
-            Edit::Insertion { start, str } => Edit::Deletion {
-                start: Cell::new(start.get()),
-                str: str.clone(),
+            Edit::Insertion {
+                start,
+                str_idx: str,
+            } => Edit::Deletion {
+                start: start.clone(),
+                str_idx: *str,
             },
-            Edit::Deletion { start, str } => Edit::Insertion {
-                start: Cell::new(start.get()),
-                str: str.clone(),
+            Edit::Deletion {
+                start,
+                str_idx: str,
+            } => Edit::Insertion {
+                start: start.clone(),
+                str_idx: *str,
             },
         }
     }
@@ -49,16 +55,20 @@ pub struct Editor {
     vim: Vim,
 
     had_space: bool,
-    pub edits: Vec<Edit>,
-    pub redos: Vec<Edit>,
+    edits: Vec<Edit>,
+    redos: Vec<Edit>,
+    edit_vecs: Vec<Vec<char>>,
 }
 
-fn text_to_lines(text: &str) -> Vec<u32> {
+fn text_to_lines<I>(text: I) -> Vec<u32>
+where
+    I: Iterator<Item = char>,
+{
     let mut lines = Vec::new();
 
     let mut count = 0;
     let mut last = 'a';
-    for c in text.chars() {
+    for c in text {
         last = c;
         if c == '\n' {
             lines.push(count);
@@ -80,7 +90,7 @@ fn text_to_lines(text: &str) -> Vec<u32> {
 impl Editor {
     pub fn with_text(initial_text: Option<String>) -> Self {
         let (lines, text) = match initial_text {
-            Some(text) => (text_to_lines(&text), Rope::from_str(&text)),
+            Some(text) => (text_to_lines(text.chars()), Rope::from_str(&text)),
             None => (vec![0], Rope::new()),
         };
         Self {
@@ -93,6 +103,7 @@ impl Editor {
             had_space: false,
             edits: Vec::new(),
             redos: Vec::new(),
+            edit_vecs: Vec::new(),
         }
     }
 
@@ -340,23 +351,29 @@ impl Editor {
         let char = text.chars().next().unwrap();
         match self.edits.last_mut() {
             _ if self.had_space => {
+                let vec = vec![char];
+                self.edit_vecs.push(vec);
+                let idx = self.edit_vecs.len() - 1;
                 self.edits.push(Edit::Insertion {
-                    start: Cell::new(pos),
-                    str: vec![char],
+                    start: Cell::new(pos as u32),
+                    str_idx: idx as u32,
                 });
                 self.had_space = false;
             }
-            Some(Edit::Insertion { str, .. }) => {
+            Some(Edit::Insertion { str_idx: str, .. }) => {
                 let is_space = text == " ";
-                str.push(char);
+                self.edit_vecs[*str as usize].push(char);
                 if is_space {
                     self.had_space = true;
                 }
             }
-            None | Some(Edit::Deletion { .. }) => self.edits.push(Edit::Insertion {
-                start: Cell::new(pos),
-                str: vec![char],
-            }),
+            None | Some(Edit::Deletion { .. }) => {
+                self.edit_vecs.push(vec![char]);
+                self.edits.push(Edit::Insertion {
+                    start: Cell::new(pos as u32),
+                    str_idx: self.edit_vecs.len() as u32 - 1,
+                })
+            }
         }
         // Invalidate redo stack if we make an edit
         if !self.redos.is_empty() {
@@ -391,17 +408,18 @@ impl Editor {
         };
         if let Some(c) = removed {
             match self.edits.last_mut() {
-                Some(Edit::Deletion { start, str }) => {
+                Some(Edit::Deletion { start, str_idx }) => {
                     let val = start.get();
                     if val > 0 {
                         start.set(val - 1)
                     }
-                    str.push(c)
+                    self.edit_vecs[*str_idx as usize].push(c);
                 }
                 None | Some(Edit::Insertion { .. }) => {
+                    self.edit_vecs.push(vec![c]);
                     self.edits.push(Edit::Deletion {
-                        start: Cell::new(pos - 1),
-                        str: vec![c],
+                        start: Cell::new(pos as u32 - 1),
+                        str_idx: self.edit_vecs.len() as u32 - 1,
                     });
                 }
             }
@@ -867,15 +885,18 @@ impl Editor {
     #[inline]
     fn apply_edit(&mut self, edit: Edit) {
         match edit {
-            Edit::Deletion { start, str } => {
-                let len = str.len();
-                let start = start.get();
+            Edit::Deletion { start, str_idx } => {
+                let len = self.edit_vecs[str_idx as usize].len();
+                let start = start.get() as usize;
                 self.text.remove(start..(start + len));
             }
-            Edit::Insertion { start, str } => self
-                .text
-                .insert(start.get(), str.into_iter().collect::<String>().as_str()),
-        }
+            Edit::Insertion { start, str_idx } => {
+                let str = self.edit_vecs[str_idx as usize].iter().collect::<String>();
+                self.text.insert(start.get() as usize, &str);
+            }
+        };
+        // TODO: Be smarter about this and only compute the lines affected
+        self.lines = text_to_lines(self.text.chars());
     }
 }
 
@@ -1005,31 +1026,31 @@ mod tests {
 
         #[test]
         fn empty_line() {
-            assert_eq!(vec![0], text_to_lines(""));
+            assert_eq!(vec![0], text_to_lines("".chars()));
         }
 
         #[test]
         fn single_line() {
             let text = "one line";
-            assert_eq!(vec![text.len() as u32], text_to_lines(text));
+            assert_eq!(vec![text.len() as u32], text_to_lines(text.chars()));
         }
 
         #[test]
         fn multiple_lines() {
             let text = "line 1\nline 2";
-            assert_eq!(vec![6, 6], text_to_lines(text));
+            assert_eq!(vec![6, 6], text_to_lines(text.chars()));
         }
 
         #[test]
         fn trailing_newline() {
             let text = "line 1\n";
-            assert_eq!(vec![6, 0], text_to_lines(text));
+            assert_eq!(vec![6, 0], text_to_lines(text.chars()));
         }
 
         #[test]
         fn leading_newline() {
             let text = "\nline 1\n";
-            assert_eq!(vec![0, 6, 0], text_to_lines(text));
+            assert_eq!(vec![0, 6, 0], text_to_lines(text.chars()));
         }
     }
 
