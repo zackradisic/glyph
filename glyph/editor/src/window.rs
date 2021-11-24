@@ -254,8 +254,8 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
             gl::VertexAttribPointer(
                 self.text_shader.attrib_v_color,
                 4,
-                gl::FLOAT,
-                gl::FALSE,
+                gl::UNSIGNED_BYTE,
+                gl::TRUE,
                 0,
                 null(),
             );
@@ -348,8 +348,8 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
             gl::VertexAttribPointer(
                 self.text_shader.attrib_v_color,
                 4,
-                gl::FLOAT,
-                gl::FALSE,
+                gl::UNSIGNED_BYTE,
+                gl::TRUE,
                 0,
                 null(),
             );

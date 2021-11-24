@@ -55,7 +55,7 @@ fn main() {
         gl::Clear(gl::COLOR_BUFFER_BIT);
     }
 
-    let mut editor_window = Window::new(filepath, &TOKYO_NIGHT_STORM);
+    let mut editor_window = Window::new(filepath, &GITHUB);
     editor_window.render_text();
     window.gl_swap_window();
 
@@ -74,14 +74,14 @@ fn main() {
 
     let mut start_capturing = false;
 
+    let bg = editor_window.theme().bg().floats();
     'running: loop {
         start = timer.performance_counter();
         unsafe {
             gl::Enable(gl::BLEND);
             gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
             gl::Enable(gl::TEXTURE_2D);
-            let bg = editor_window.theme().bg();
-            gl::ClearColor(bg.r, bg.g, bg.b, bg.a);
+            gl::ClearColor(bg[0], bg[1], bg[2], bg[3]);
             gl::Clear(gl::COLOR_BUFFER_BIT);
         }
 

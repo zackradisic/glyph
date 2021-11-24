@@ -45,20 +45,29 @@ pub struct MoveWord {
 #[repr(C)]
 #[derive(Clone)]
 pub struct Color {
-    pub r: f32,
-    pub g: f32,
-    pub b: f32,
-    pub a: f32,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
 }
 
 impl Color {
+    pub fn floats(&self) -> [f32; 4] {
+        [
+            self.r as f32 / 255.0,
+            self.g as f32 / 255.0,
+            self.b as f32 / 255.0,
+            self.a as f32 / 255.0,
+        ]
+    }
+
     fn from_hex(hex: &str) -> Self {
         let [r, g, b, a] = Color::hex_to_rgba(hex);
         Self { r, g, b, a }
     }
 
-    fn hex_to_rgba(hex: &str) -> [f32; 4] {
-        let mut rgba = [0.0, 0.0, 0.0, 1.0];
+    fn hex_to_rgba(hex: &str) -> [u8; 4] {
+        let mut rgba = [0, 0, 0, 255];
         let hex = hex.trim_start_matches('#');
         for (i, c) in hex
             .chars()
@@ -67,7 +76,8 @@ impl Color {
             .enumerate()
         {
             let c = c.0.to_digit(16).unwrap() << 4 | c.1.to_digit(16).unwrap();
-            rgba[i] = c as f32 / 255.0;
+            println!("val: {}", c as u8);
+            rgba[i] = c as u8;
         }
         rgba
     }
