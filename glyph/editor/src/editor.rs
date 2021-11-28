@@ -8,10 +8,11 @@ use crate::{
     EditorEvent, MoveWord, MoveWordKind,
 };
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Mode {
     Insert,
     Normal,
+    Visual,
 }
 
 #[derive(Clone, Debug)]
@@ -52,8 +53,11 @@ pub struct Editor {
     text: Rope,
     mode: Mode,
 
+    // Vim stuff
     vim: Vim,
+    selection: Option<(u32, u32)>,
 
+    // Undo/redo
     had_space: bool,
     edits: Vec<Edit>,
     redos: Vec<Edit>,
@@ -100,6 +104,7 @@ impl Editor {
             text,
             mode: Mode::Insert,
             vim: Vim::new(),
+            selection: None,
             had_space: false,
             edits: Vec::new(),
             redos: Vec::new(),
@@ -121,42 +126,87 @@ impl Editor {
         // );
         match self.mode {
             Mode::Normal => self.normal_mode(event),
-            Mode::Insert => match event {
-                Event::KeyDown {
-                    keycode: Some(Keycode::Tab),
-                    ..
-                } => {
-                    self.insert("  ");
-                    EditorEvent::DrawText
+            Mode::Insert => self.insert_mode(event),
+            Mode::Visual => self.visual_mode(event),
+        }
+    }
+}
+
+// This impl contains utilities for visual mode
+impl Editor {
+    /// Visual mode is identical to normal mode except:
+    /// * movements adjust the selection start and end
+    /// * Change/Delete/Yank don't have any modifiers and instead apply to the selection
+    fn visual_mode(&mut self, event: Event) -> EditorEvent {
+        match self.vim.event(event) {
+            None => EditorEvent::Nothing,
+            Some(cmd) => {
+                let start = self
+                    .selection()
+                    .map_or_else(|| self.pos(), |(start, _)| start as usize);
+                let result = self.handle_cmd(&cmd);
+                let end = self.pos();
+
+                if start == end {
+                    self.selection = Some((start as u32, start as u32));
+                    return result;
                 }
-                Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => {
-                    self.switch_mode(Mode::Normal);
-                    EditorEvent::DrawCursor
-                }
-                Event::KeyDown {
-                    keycode: Some(Keycode::Backspace),
-                    ..
-                } => self.backspace(),
-                Event::KeyDown {
-                    keycode: Some(Keycode::Return),
-                    ..
-                } => {
-                    self.enter();
-                    EditorEvent::DrawText
-                }
-                Event::TextInput { text, .. } => {
-                    if let Mode::Insert = self.mode {
-                        self.insert(&text);
-                        EditorEvent::DrawText
-                    } else {
-                        EditorEvent::Nothing
+
+                if let Some(ref mut selection) = self.selection {
+                    match start.cmp(&end) {
+                        Ordering::Equal => {}
+                        Ordering::Less | Ordering::Greater => {
+                            selection.1 = end as u32;
+                        }
                     }
+                } else if matches!(self.mode, Mode::Visual) {
+                    unreachable!("Selection should be set when entering visual mode");
                 }
-                _ => EditorEvent::Nothing,
-            },
+
+                result
+            }
+        }
+    }
+}
+
+// This impl contains utilities for insert mode
+impl Editor {
+    fn insert_mode(&mut self, event: Event) -> EditorEvent {
+        match event {
+            Event::KeyDown {
+                keycode: Some(Keycode::Tab),
+                ..
+            } => {
+                self.insert("  ");
+                EditorEvent::DrawText
+            }
+            Event::KeyDown {
+                keycode: Some(Keycode::Escape),
+                ..
+            } => {
+                self.switch_mode(Mode::Normal);
+                EditorEvent::DrawCursor
+            }
+            Event::KeyDown {
+                keycode: Some(Keycode::Backspace),
+                ..
+            } => self.backspace(),
+            Event::KeyDown {
+                keycode: Some(Keycode::Return),
+                ..
+            } => {
+                self.enter();
+                EditorEvent::DrawText
+            }
+            Event::TextInput { text, .. } => {
+                if let Mode::Insert = self.mode {
+                    self.insert(&text);
+                    EditorEvent::DrawText
+                } else {
+                    EditorEvent::Nothing
+                }
+            }
+            _ => EditorEvent::Nothing,
         }
     }
 }
@@ -171,6 +221,48 @@ impl Editor {
     }
 
     fn handle_cmd(&mut self, cmd: &Cmd) -> EditorEvent {
+        match self.mode {
+            Mode::Normal => self.handle_cmd_normal(cmd),
+            Mode::Visual => self.handle_cmd_visual(cmd),
+            _ => panic!("Vim commands should only be executed in normal or visual mode"),
+        }
+    }
+
+    fn handle_cmd_visual(&mut self, cmd: &Cmd) -> EditorEvent {
+        match cmd {
+            Cmd::SwitchMode(Mode::Insert) => {
+                self.switch_mode(Mode::Insert);
+                EditorEvent::Nothing
+            }
+            Cmd::SwitchMode(Mode::Visual) => {
+                self.switch_mode(Mode::Normal);
+                EditorEvent::Nothing
+            }
+            Cmd::Change(None) | Cmd::Delete(None) => {
+                self.delete_selection();
+                if matches!(cmd, Cmd::Change(None)) {
+                    self.switch_mode(Mode::Insert);
+                } else {
+                    self.switch_mode(Mode::Normal);
+                }
+                EditorEvent::DrawText
+            }
+            Cmd::Yank(None) => {
+                todo!()
+            }
+            // Command parser should only return repeated movement commands
+            Cmd::Repeat { count, cmd } => self.repeated_cmd(*count, cmd),
+            Cmd::Move(mv) => {
+                self.movement(mv);
+                EditorEvent::DrawCursor
+            }
+            _ => panic!(
+                "Only Delete/Change/Yank/Repetition/Movement commands are valid in visual mode"
+            ),
+        }
+    }
+
+    fn handle_cmd_normal(&mut self, cmd: &Cmd) -> EditorEvent {
         match cmd {
             Cmd::Undo => {
                 self.undo();
@@ -180,17 +272,11 @@ impl Editor {
                 self.redo();
                 EditorEvent::DrawText
             }
-            Cmd::SwitchMode => {
-                self.switch_mode(Mode::Insert);
+            Cmd::SwitchMode(mode) => {
+                self.switch_mode(*mode);
                 EditorEvent::DrawCursor
             }
-            Cmd::Repeat { count, cmd } => {
-                let mut ret = EditorEvent::DrawCursor;
-                for _ in 0..*count {
-                    ret = self.handle_cmd(cmd);
-                }
-                ret
-            }
+            Cmd::Repeat { count, cmd } => self.repeated_cmd(*count, cmd),
             Cmd::Delete(None) => {
                 self.delete_line(self.line);
                 EditorEvent::DrawText
@@ -237,6 +323,14 @@ impl Editor {
             }
             r => todo!("Unimplemented: {:?}", r),
         }
+    }
+
+    fn repeated_cmd(&mut self, count: u16, cmd: &Cmd) -> EditorEvent {
+        let mut ret = EditorEvent::DrawCursor;
+        for _ in 0..count {
+            ret = self.handle_cmd(cmd);
+        }
+        ret
     }
 
     /// Returns true if the movement was truncated (it exceeded the end of the line
@@ -318,6 +412,17 @@ impl Editor {
 
 // This impl contains text changing utilities
 impl Editor {
+    fn delete_selection(&mut self) {
+        if let Some((start, end)) = self.selection {
+            use Ordering::*;
+
+            match start.cmp(&end) {
+                Equal | Less => self.delete_range(start as usize..end as usize),
+                Greater => self.delete_range(end as usize..start as usize),
+            }
+        }
+    }
+
     fn delete_mv(&mut self, mv: &Move) {
         let cursor = self.cursor;
         let line = self.line;
@@ -429,24 +534,36 @@ impl Editor {
 
     /// Delete chars in a range.
     ///
+    /// ### Normal mode
     /// If the range spans multiple lines then we just apply it to the entire line,
     /// this is the same behaviour demonstrated by Vim. For example, try the command
     /// `3dj` this will delete the next 3 lines in totality. It doesn't split the lines up.
+    ///
+    /// ### Visual mode
+    /// Behaves as expected, cutting and splicing lines instead of deleting them in totality
     #[inline]
     fn delete_range(&mut self, range: Range<usize>) {
-        let start_line = self.text.char_to_line(range.start);
-        let end_line = self.text.char_to_line(range.end);
-        if start_line == end_line {
+        let (start, end) = match self.mode {
+            // Start and ending lines
+            Mode::Normal => (
+                self.text.char_to_line(range.start),
+                self.text.char_to_line(range.end),
+            ),
+            Mode::Visual => (range.start, range.end),
+            Mode::Insert => panic!("delete_range should not be called in insert mode"),
+        };
+
+        if start == end {
             self.text.remove(range);
-            self.lines[start_line] = self.line_count(start_line) as u32;
-        } else {
-            let start = self.text.line_to_char(start_line);
-            let end = self.text.line_to_char(end_line) + self.text.line(end_line).len_chars();
+            self.lines[start] = self.line_count(start) as u32;
+        } else if matches!(self.mode, Mode::Normal) {
+            let start = self.text.line_to_char(start);
+            let end = self.text.line_to_char(end) + self.text.line(end).len_chars();
 
             self.text.remove(start..end);
 
-            let mut i = start_line;
-            for _ in start_line..(end_line + 1) {
+            let mut i = start;
+            for _ in start..(end + 1) {
                 if self.lines.is_empty() {
                     break;
                 }
@@ -455,6 +572,16 @@ impl Editor {
                     i -= 1;
                 }
             }
+        } else {
+            let line_pos = self.text.char_to_line(start);
+
+            self.text.remove(start..end);
+
+            // TODO: Be smarter about this and only compute the lines affected
+            self.lines = text_to_lines(self.text.chars());
+
+            self.line = line_pos;
+            self.cursor = start - self.text.line_to_char(line_pos);
         }
     }
 
@@ -904,14 +1031,69 @@ impl Editor {
 impl Editor {
     #[inline]
     fn switch_mode(&mut self, mode: Mode) {
-        if let (Mode::Insert, Mode::Normal) = (self.mode, mode) {
-            // If we are switching from insert to normal mode and we are on the new-line character,
-            // move it back since we disallow that in normal mode
-            if self.cursor == self.lines[self.line] as usize && self.cursor > 0 {
-                self.cursor -= 1;
+        match (self.mode, mode) {
+            (Mode::Insert, Mode::Normal) => {
+                // If we are switching from insert to normal mode and we are on the new-line character,
+                // move it back since we disallow that in normal mode
+                if self.cursor == self.lines[self.line] as usize && self.cursor > 0 {
+                    self.cursor -= 1;
+                }
+                self.mode = mode;
+                self.vim.set_mode(mode);
+            }
+            (Mode::Normal, Mode::Visual) => {
+                let pos = self.pos() as u32;
+                self.selection = Some((pos, pos));
+                self.mode = mode;
+                self.vim.set_mode(mode);
+            }
+            // Hitting `v` in visual mode should return to normal mode
+            (Mode::Visual, Mode::Visual) => {
+                self.selection = None;
+                self.mode = Mode::Normal;
+                self.vim.set_mode(mode);
+            }
+            // Switching to visual mode only allowed from normal mode
+            (_, Mode::Visual) => {}
+            (Mode::Visual, _) => {
+                self.selection = None;
+                self.mode = mode;
+                self.vim.set_mode(mode);
+            }
+            (_, _) => {
+                self.mode = mode;
+                self.vim.set_mode(mode);
             }
         }
-        self.mode = mode;
+    }
+
+    #[inline]
+    pub fn within_selection(&self, i: u32) -> bool {
+        if let Some((start, end)) = self.selection {
+            match start.cmp(&end) {
+                Ordering::Less => i >= start && i <= end,
+                Ordering::Greater | Ordering::Equal => i >= end && i <= start,
+            }
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    pub fn past_selection(&self, i: u32) -> bool {
+        if let Some((start, end)) = self.selection {
+            match start.cmp(&end) {
+                Ordering::Less => i > end,
+                Ordering::Greater | Ordering::Equal => i > start,
+            }
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    pub fn selection(&self) -> Option<(u32, u32)> {
+        self.selection
     }
 
     #[inline]

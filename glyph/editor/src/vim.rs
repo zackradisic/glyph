@@ -1,20 +1,37 @@
 use sdl2::{event::Event, keyboard::Keycode};
 
+use crate::Mode;
+
 #[derive(Debug, PartialEq)]
 pub enum Cmd {
-    Repeat { count: u16, cmd: Box<Cmd> },
+    Repeat {
+        count: u16,
+        cmd: Box<Cmd>,
+    },
+    /// None is only valid in visual mode, means to apply
+    /// to the selection
     Delete(Option<Move>),
     Change(Option<Move>),
     Yank(Option<Move>),
+
     Move(Move),
     SwitchMove(Move),
-    SwitchMode,
+    SwitchMode(Mode),
     NewLine(NewLine),
     Undo,
     Redo,
 }
 
-// 2 d f e
+impl Cmd {
+    #[inline]
+    pub fn is_movement(&self) -> bool {
+        match self {
+            Cmd::Move(_) => true,
+            Cmd::Repeat { cmd, .. } => cmd.is_movement(),
+            _ => false,
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub struct NewLine {
@@ -90,6 +107,7 @@ pub struct Vim {
     parsing_find: bool,
     parsing_start: bool,
     parse_idx: usize,
+    mode: Mode,
 }
 
 impl Vim {
@@ -99,6 +117,7 @@ impl Vim {
             parsing_find: false,
             parsing_start: false,
             parse_idx: 0,
+            mode: Mode::Normal,
         }
     }
 
@@ -134,6 +153,11 @@ impl Vim {
                     self.parsing_find = false;
                 } else {
                     match text.as_str() {
+                        // Visual mode
+                        "v" => {
+                            self.reset();
+                            return Some(Cmd::SwitchMode(Mode::Visual));
+                        }
                         // Basic movement
                         "h" => self.cmd_stack.push(Token::Left),
                         "j" => self.cmd_stack.push(Token::Down),
@@ -158,21 +182,32 @@ impl Vim {
                             self.parsing_start = true;
                         }
                         "G" => self.cmd_stack.push(Token::End),
-                        "A" => return Some(Cmd::SwitchMove(Move::LineEnd)),
-                        "a" => return Some(Cmd::SwitchMove(Move::Right)),
+                        "A" => {
+                            self.reset();
+                            return Some(Cmd::SwitchMove(Move::LineEnd));
+                        }
+                        "a" => {
+                            self.reset();
+                            return Some(Cmd::SwitchMove(Move::Right));
+                        }
                         "O" => {
+                            self.reset();
                             return Some(Cmd::NewLine(NewLine {
                                 up: true,
                                 switch_mode: true,
-                            }))
+                            }));
                         }
                         "o" => {
+                            self.reset();
                             return Some(Cmd::NewLine(NewLine {
                                 up: false,
                                 switch_mode: true,
-                            }))
+                            }));
                         }
-                        "i" => return Some(Cmd::SwitchMode),
+                        "i" => {
+                            self.reset();
+                            return Some(Cmd::SwitchMode(Mode::Insert));
+                        }
                         "$" => self.cmd_stack.push(Token::LineEnd),
                         "{" => self.cmd_stack.push(Token::ParagraphBegin),
                         "}" => self.cmd_stack.push(Token::ParagraphEnd),
@@ -238,6 +273,44 @@ impl Vim {
 // Parsing
 impl Vim {
     fn parse_cmd(&mut self) -> Result<Cmd> {
+        match self.mode {
+            Mode::Normal => self.parse_cmd_normal_mode(),
+            Mode::Visual => self.parse_cmd_visual_mode(),
+            _ => unreachable!("Shouldn't handle cmds in insert mode"),
+        }
+    }
+
+    /// Delete/Chank/Yank and movements are only valid in visual mode
+    fn parse_cmd_visual_mode(&mut self) -> Result<Cmd> {
+        match self.next().cloned() {
+            None => Err(FailAction::Continue),
+            Some(Token::Delete) => Ok(Cmd::Delete(None)),
+            Some(Token::Change) => Ok(Cmd::Change(None)),
+            Some(Token::Yank) => Ok(Cmd::Yank(None)),
+            Some(Token::Number(count)) => {
+                match self.parse_cmd()? {
+                    Cmd::Delete(None) => Ok(Cmd::Delete(None)),
+                    Cmd::Change(None) => Ok(Cmd::Change(None)),
+                    Cmd::Yank(None) => Ok(Cmd::Yank(None)),
+                    Cmd::Move(m) => Ok(Cmd::Repeat {
+                        count,
+                        cmd: Box::new(Cmd::Move(m)),
+                    }),
+                    _ => {
+                        // Only delete/yank/change or movements are valid repeated
+                        // cmds in visual mode
+                        Err(FailAction::Reset)
+                    }
+                }
+            }
+            _ => {
+                self.back();
+                Ok(Cmd::Move(self.parse_move()?))
+            }
+        }
+    }
+
+    fn parse_cmd_normal_mode(&mut self) -> Result<Cmd> {
         match self.next().cloned() {
             None => Err(FailAction::Continue),
             Some(Token::Undo) => Ok(Cmd::Undo),
@@ -249,20 +322,6 @@ impl Vim {
                 count,
                 cmd: Box::new(cmd),
             }),
-            Some(Token::Find) => {
-                if let Some(Token::Char(char)) = self.next() {
-                    Ok(Cmd::Move(Move::Find(*char, false)))
-                } else {
-                    Err(FailAction::Continue)
-                }
-            }
-            Some(Token::FindReverse) => {
-                if let Some(Token::Char(char)) = self.next() {
-                    Ok(Cmd::Move(Move::Find(*char, true)))
-                } else {
-                    Err(FailAction::Continue)
-                }
-            }
             _ => {
                 self.back();
                 Ok(Cmd::Move(self.parse_move()?))
@@ -340,6 +399,14 @@ impl Vim {
         if self.parse_idx > 0 {
             self.parse_idx -= 1;
         }
+    }
+}
+
+// Utility
+impl Vim {
+    #[inline]
+    pub fn set_mode(&mut self, mode: Mode) {
+        self.mode = mode;
     }
 }
 

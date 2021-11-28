@@ -29,12 +29,19 @@ pub enum EditorEvent {
     Nothing,
     DrawText,
     DrawCursor,
+    DrawSelection,
+    Multiple(Box<[EditorEvent; 3]>),
 }
 
 pub enum MoveWordKind {
     Next,
     Prev,
     End,
+}
+
+pub enum WindowFrameKind {
+    Draw,
+    Scroll,
 }
 
 pub struct MoveWord {

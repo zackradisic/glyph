@@ -5,7 +5,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use glyph::{EventResult, Window, GITHUB, SCREEN_HEIGHT, SCREEN_WIDTH, TOKYO_NIGHT_STORM};
+use glyph::{
+    EventResult, Window, WindowFrameKind, GITHUB, SCREEN_HEIGHT, SCREEN_WIDTH, TOKYO_NIGHT_STORM,
+};
 
 fn main() {
     #[cfg(debug_assertions)]
@@ -101,10 +103,10 @@ fn main() {
 
         frames += 1;
         if draw {
-            editor_window.frame(timer.ticks());
+            editor_window.frame(WindowFrameKind::Draw, timer.ticks());
             window.gl_swap_window();
         } else if scroll {
-            editor_window.frame_scroll(timer.ticks());
+            editor_window.frame(WindowFrameKind::Scroll, timer.ticks());
             window.gl_swap_window();
         }
 

@@ -15,7 +15,7 @@ use syntax::Highlight;
 
 use crate::{
     atlas::Atlas, Color, Editor, EditorEvent, EventResult, GLProgram, Shader, ThemeType,
-    SCREEN_HEIGHT, SCREEN_WIDTH,
+    WindowFrameKind, SCREEN_HEIGHT, SCREEN_WIDTH,
 };
 
 #[repr(C)]
@@ -25,6 +25,41 @@ struct Point {
     s: f32,
     t: f32,
 }
+#[derive(Clone, Debug)]
+#[repr(C)]
+struct Point3 {
+    // x == f32::MAX signifies Point3 is null
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+impl Point3 {
+    #[inline]
+    fn is_null(&self) -> bool {
+        self.x == f32::MAX
+    }
+
+    #[inline]
+    fn null() -> Point3 {
+        Point3 {
+            x: f32::MAX,
+            y: f32::MAX,
+            z: f32::MAX,
+        }
+    }
+}
+
+impl Default for Point3 {
+    fn default() -> Self {
+        Self {
+            x: f32::MAX,
+            y: Default::default(),
+            z: Default::default(),
+        }
+    }
+}
+
 const SX: f32 = 0.8 / SCREEN_WIDTH as f32;
 const SY: f32 = 0.8 / SCREEN_HEIGHT as f32;
 
@@ -36,20 +71,20 @@ pub struct Window<'theme, 'highlight> {
     atlas: Atlas,
     text_shader: TextShaderProgram,
     cursor_shader: CursorShaderProgram,
+    highlight_shader: HighlightShaderProgram,
     editor: Editor,
     text_coords: Vec<Point>,
     text_colors: Vec<Color>,
-    cursor_coords: [f32; 18],
+    cursor_coords: [Point3; 6],
+    highlight_coords: Vec<Point3>,
     y_offset: f32,
     x_offset: f32,
     text_height: f32,
     text_width: f32,
-
-    // Time since last stroke in ms
-    last_stroke: u32,
-    theme: &'theme ThemeType,
+    last_stroke: u32, // Time since last stroke in ms
 
     // Syntax highlighting
+    theme: &'theme ThemeType,
     highlighter: Highlighter,
     highlight_cfg: &'highlight Lazy<HighlightConfiguration>,
     text_changed: bool,
@@ -64,8 +99,8 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
 
         let text_shader = TextShaderProgram::default();
         let atlas = Atlas::new(&mut face, 48, text_shader.uniform_tex).unwrap();
-
         let cursor_shader = CursorShaderProgram::default();
+        let highlight_shader = HighlightShaderProgram::default();
 
         let highlighter = Highlighter::new();
 
@@ -73,15 +108,18 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
             atlas,
             text_shader,
             cursor_shader,
+            highlight_shader,
             editor: Editor::with_text(initial_text),
             text_coords: Vec::new(),
             text_colors: Vec::new(),
             cursor_coords: Default::default(),
+            highlight_coords: Default::default(),
             y_offset: 0.0,
             x_offset: 0.0,
             text_height: 0.0,
             text_width: 0.0,
             last_stroke: 0,
+
             theme,
             highlighter,
             highlight_cfg: &syntax::RUST_CFG,
@@ -118,6 +156,7 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                     self.cursor_changed = true;
                     self.adjust_scroll();
                     self.queue_cursor();
+                    self.queue_selection(START_X, START_Y, SX, SY);
                     EventResult::Draw
                 }
                 _ => EventResult::Nothing,
@@ -186,6 +225,7 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
         self.queue_cursor();
         let colors = self.queue_highlights();
         self.queue_text(colors, -1f32 + 8f32 * SX, 1f32 - 50f32 * SY, SX, SY);
+        self.queue_selection(-1f32 + 8f32 * SX, 1f32 - 50f32 * SY, SX, SY)
     }
 
     pub fn queue_cursor(&mut self) {
@@ -198,35 +238,43 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
         let y = ((1f32 - 50f32 * SY) + real_h) - (self.editor.line() as f32 * real_h);
 
         self.cursor_coords = [
-            // bottom left
-            x,
-            y - h,
-            0.0,
+            // // bottom left
+            Point3 {
+                x,
+                y: y - h,
+                z: 0.0,
+            },
             // top left
-            x,
-            y,
-            0.0,
+            Point3 { x, y, z: 0.0 },
             // top right
-            x + w,
-            y,
-            0.0,
+            Point3 {
+                x: x + w,
+                y,
+                z: 0.0,
+            },
             // bottom right
-            x + w,
-            y - h,
-            0.0,
+            Point3 {
+                x: x + w,
+                y: y - h,
+                z: 0.0,
+            },
             // top right,
-            x + w,
-            y,
-            0.0,
+            Point3 {
+                x: x + w,
+                y,
+                z: 0.0,
+            },
             // bottom leff
-            x,
-            y - h,
-            0.0,
+            Point3 {
+                x,
+                y: y - h,
+                z: 0.0,
+            },
         ];
     }
 
-    /// TODO: Merge this with `frame` before we shoot ourselves in the foot
-    pub fn frame_scroll(&mut self, ticks_ms: u32) {
+    pub fn frame(&mut self, kind: WindowFrameKind, ticks_ms: u32) {
+        let draw = matches!(kind, WindowFrameKind::Draw);
         self.text_shader.set_used();
 
         // Draw text
@@ -249,6 +297,14 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                 null(),
             );
             gl::EnableVertexAttribArray(self.text_shader.attrib_coord);
+            if draw {
+                gl::BufferData(
+                    gl::ARRAY_BUFFER,
+                    (self.text_coords.len() * mem::size_of::<Point>()) as GLsizeiptr,
+                    self.text_coords.as_ptr() as *const GLvoid,
+                    gl::DYNAMIC_DRAW,
+                );
+            }
 
             gl::BindBuffer(gl::ARRAY_BUFFER, self.text_shader.vbo_color);
             gl::VertexAttribPointer(
@@ -260,158 +316,223 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                 null(),
             );
             gl::EnableVertexAttribArray(self.text_shader.attrib_v_color);
+            if draw {
+                gl::BufferData(
+                    gl::ARRAY_BUFFER,
+                    (self.text_colors.len() * mem::size_of::<Color>()) as GLsizeiptr,
+                    self.text_colors.as_ptr() as *const GLvoid,
+                    gl::DYNAMIC_DRAW,
+                );
+            }
 
             gl::DrawArrays(gl::TRIANGLES, 0, self.text_coords.len() as i32);
             gl::DisableVertexAttribArray(self.text_shader.attrib_v_color);
             gl::DisableVertexAttribArray(self.text_shader.attrib_coord);
         }
 
-        // Draw cursor
-        self.cursor_shader.set_used();
-        unsafe {
-            gl::VertexAttrib1f(self.cursor_shader.attrib_ytranslate, self.y_offset * SY);
-            gl::VertexAttrib1f(self.cursor_shader.attrib_xtranslate, self.x_offset * SX);
-            gl::Uniform1f(
-                self.cursor_shader.uniform_laststroke,
-                self.last_stroke as f32 / 1000.0,
-            );
-            gl::Uniform1i(
-                self.cursor_shader.uniform_is_blinking,
-                if self.editor.is_insert() { 1 } else { 0 },
-            );
-            gl::Uniform1f(self.cursor_shader.uniform_time, ticks_ms as f32 / 1000.0);
+        // Draw highlight
+        {
+            self.highlight_shader.set_used();
+            let attrib_ptr = self.highlight_shader.attrib_apos;
+            unsafe {
+                gl::VertexAttrib1f(self.highlight_shader.attrib_ytranslate, self.y_offset * SY);
+                gl::VertexAttrib1f(self.highlight_shader.attrib_xtranslate, self.x_offset * SX);
+
+                gl::BindBuffer(gl::ARRAY_BUFFER, self.highlight_shader.vbo);
+
+                if draw {
+                    gl::BufferData(
+                        gl::ARRAY_BUFFER,
+                        (self.highlight_coords.len() * mem::size_of::<Point3>()) as isize,
+                        self.highlight_coords.as_ptr() as *const c_void,
+                        gl::DYNAMIC_DRAW,
+                    );
+                }
+
+                gl::VertexAttribPointer(
+                    attrib_ptr,
+                    3,
+                    gl::FLOAT,
+                    gl::FALSE,
+                    mem::size_of::<Point3>() as i32,
+                    null(),
+                );
+                gl::EnableVertexAttribArray(0);
+                gl::DrawArrays(gl::TRIANGLES, 0, self.highlight_coords.len() as i32 * 3);
+                gl::DisableVertexAttribArray(0);
+            }
         }
 
-        let attrib_ptr = self.cursor_shader.attrib_apos;
-        unsafe {
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.cursor_shader.vbo);
+        // Draw cursor
+        {
+            self.cursor_shader.set_used();
+            unsafe {
+                gl::VertexAttrib1f(self.cursor_shader.attrib_ytranslate, self.y_offset * SY);
+                gl::VertexAttrib1f(self.cursor_shader.attrib_xtranslate, self.x_offset * SX);
+                gl::Uniform1f(
+                    self.cursor_shader.uniform_laststroke,
+                    self.last_stroke as f32 / 1000.0,
+                );
+                gl::Uniform1i(
+                    self.cursor_shader.uniform_is_blinking,
+                    if self.editor.is_insert() { 1 } else { 0 },
+                );
+                gl::Uniform1f(self.cursor_shader.uniform_time, ticks_ms as f32 / 1000.0);
+            }
 
-            // gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
-            // gl::BlendEquation(gl::FUNC_SUBTRACT);
+            let attrib_ptr = self.cursor_shader.attrib_apos;
+            unsafe {
+                gl::BindBuffer(gl::ARRAY_BUFFER, self.cursor_shader.vbo);
 
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (self.cursor_coords.len() * mem::size_of::<f32>()) as isize,
-                self.cursor_coords.as_ptr() as *const c_void,
-                gl::DYNAMIC_DRAW,
-            );
+                // gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
+                // gl::BlendEquation(gl::FUNC_SUBTRACT);
 
-            gl::VertexAttribPointer(
-                attrib_ptr,
-                3,
-                gl::FLOAT,
-                gl::FALSE,
-                3 * mem::size_of::<f32>() as i32,
-                null(),
-            );
-            gl::EnableVertexAttribArray(0);
-            gl::DrawArrays(gl::TRIANGLES, 0, 6);
-            gl::DisableVertexAttribArray(0);
+                if draw {
+                    gl::BufferData(
+                        gl::ARRAY_BUFFER,
+                        (self.cursor_coords.len() * mem::size_of::<Point3>()) as isize,
+                        self.cursor_coords.as_ptr() as *const c_void,
+                        gl::DYNAMIC_DRAW,
+                    );
+                }
 
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            gl::BlendEquation(gl::FUNC_ADD);
+                gl::VertexAttribPointer(
+                    attrib_ptr,
+                    3,
+                    gl::FLOAT,
+                    gl::FALSE,
+                    3 * mem::size_of::<f32>() as i32,
+                    null(),
+                );
+                gl::EnableVertexAttribArray(0);
+                gl::DrawArrays(gl::TRIANGLES, 0, 6);
+                gl::DisableVertexAttribArray(0);
+
+                gl::Enable(gl::BLEND);
+                gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
+                gl::BlendEquation(gl::FUNC_ADD);
+            }
         }
     }
 
-    pub fn frame(&mut self, ticks_ms: u32) {
-        self.text_shader.set_used();
+    /// TODO: Abstract char-glyph iteration logic shared by `queue_selection()` and
+    /// `queue_text()` into a common Iterator
+    fn queue_selection(&mut self, mut x: f32, mut y: f32, sx: f32, sy: f32) {
+        if self.editor.selection().is_none() {
+            self.highlight_coords.clear();
+            return;
+        }
+        // println!(
+        //     "Selection: {:?} last_char {}",
+        //     self.editor.selection(),
+        //     self.editor
+        //         .text_all()
+        //         .char(self.editor.selection().unwrap().1 as usize)
+        // );
 
-        // Draw text
-        unsafe {
-            gl::VertexAttrib1f(self.text_shader.attrib_ytranslate, SY * self.y_offset);
-            gl::VertexAttrib1f(self.text_shader.attrib_xtranslate, self.x_offset * SX);
+        let mut hl_coords: Vec<Point3> = Vec::new();
 
-            // Use the texture containing the atlas
-            gl::BindTexture(gl::TEXTURE_2D, self.atlas.tex);
-            gl::Uniform1i(self.text_shader.uniform_tex, 0);
+        let starting_x = x;
+        let max_w = self.atlas.max_w * sx;
+        let max_h = self.atlas.max_h * sy;
 
-            // Set up the VBO for our vertex data
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.text_shader.vbo);
-            gl::VertexAttribPointer(
-                self.text_shader.attrib_coord,
-                4,
-                gl::FLOAT,
-                gl::FALSE,
-                0,
-                null(),
-            );
-            gl::EnableVertexAttribArray(self.text_shader.attrib_coord);
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (self.text_coords.len() * mem::size_of::<Point>()) as GLsizeiptr,
-                self.text_coords.as_ptr() as *const GLvoid,
-                gl::DYNAMIC_DRAW,
-            );
+        let mut top_left: Point3 = Point3::null();
+        let mut bot_left: Point3 = Point3::null();
 
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.text_shader.vbo_color);
-            gl::VertexAttribPointer(
-                self.text_shader.attrib_v_color,
-                4,
-                gl::UNSIGNED_BYTE,
-                gl::TRUE,
-                0,
-                null(),
-            );
-            gl::EnableVertexAttribArray(self.text_shader.attrib_v_color);
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (self.text_colors.len() * mem::size_of::<Color>()) as GLsizeiptr,
-                self.text_colors.as_ptr() as *const GLvoid,
-                gl::DYNAMIC_DRAW,
-            );
+        let mut col: u32 = 0;
+        for (i, ch) in self.editor.text_all().chars().enumerate() {
+            let c = ch as usize;
 
-            gl::DrawArrays(gl::TRIANGLES, 0, self.text_coords.len() as i32);
-            gl::DisableVertexAttribArray(self.text_shader.attrib_v_color);
-            gl::DisableVertexAttribArray(self.text_shader.attrib_coord);
+            // Calculate the vertex and texture coordinates
+            let x2 = x + (col as f32 * max_w);
+            // let x2 = x + max_w;
+            let y2 = -y;
+            let width = self.atlas.glyphs[c].bitmap_w * sx;
+            let height = self.atlas.glyphs[c].bitmap_h * sy;
+
+            // Skip glyphs that have no pixels
+            if (width == 0.0 || height == 0.0) && !self.editor.past_selection(i as u32) {
+                match ch as u8 {
+                    32 => {
+                        col += 1;
+                    }
+                    // Tab
+                    9 => {
+                        x += self.atlas.max_w * sy * 4f32;
+                        col += 4;
+                    }
+                    // New line
+                    10 => {
+                        y -= max_h;
+                        x = starting_x;
+                        if !top_left.is_null() {
+                            let bot_right = Point3 {
+                                x: x2,
+                                y: -y2 + max_h,
+                                z: 0.0,
+                            };
+                            let top_right = Point3 {
+                                x: x2,
+                                y: -y2,
+                                z: 0.0,
+                            };
+                            // First triangle
+                            hl_coords.push(top_left.clone());
+                            hl_coords.push(bot_left.clone());
+                            hl_coords.push(bot_right.clone());
+                            // Second triangle
+                            hl_coords.push(top_left.clone());
+                            hl_coords.push(top_right);
+                            hl_coords.push(bot_right);
+
+                            top_left = Point3::null();
+                            bot_left = Point3::null();
+                        }
+                        col = 0;
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
+            if top_left.is_null() && self.editor.within_selection(i as u32) {
+                top_left = Point3 {
+                    x: x2,
+                    y: -y2,
+                    z: 0.0,
+                };
+                bot_left = Point3 {
+                    x: x2,
+                    y: -y2 + max_h,
+                    z: 0.0,
+                };
+            } else if !top_left.is_null() && !self.editor.within_selection(i as u32) {
+                let bot_right = Point3 {
+                    x: x2,
+                    y: -y2 + max_h,
+                    z: 0.0,
+                };
+                let top_right = Point3 {
+                    x: x2,
+                    y: -y2,
+                    z: 0.0,
+                };
+                // First triangle
+                hl_coords.push(top_left.clone());
+                hl_coords.push(bot_left.clone());
+                hl_coords.push(bot_right.clone());
+                // Second triangle
+                hl_coords.push(top_left.clone());
+                hl_coords.push(top_right);
+                hl_coords.push(bot_right);
+                break;
+            } else if self.editor.past_selection(i as u32) {
+                break;
+            }
+            col += 1;
         }
 
-        // Draw cursor
-        self.cursor_shader.set_used();
-        unsafe {
-            gl::VertexAttrib1f(self.cursor_shader.attrib_ytranslate, self.y_offset * SY);
-            gl::VertexAttrib1f(self.cursor_shader.attrib_xtranslate, self.x_offset * SX);
-            gl::Uniform1f(
-                self.cursor_shader.uniform_laststroke,
-                self.last_stroke as f32 / 1000.0,
-            );
-            gl::Uniform1i(
-                self.cursor_shader.uniform_is_blinking,
-                if self.editor.is_insert() { 1 } else { 0 },
-            );
-            gl::Uniform1f(self.cursor_shader.uniform_time, ticks_ms as f32 / 1000.0);
-        }
-
-        let attrib_ptr = self.cursor_shader.attrib_apos;
-        unsafe {
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.cursor_shader.vbo);
-
-            // gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
-            // gl::BlendEquation(gl::FUNC_SUBTRACT);
-
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (self.cursor_coords.len() * mem::size_of::<f32>()) as isize,
-                self.cursor_coords.as_ptr() as *const c_void,
-                gl::DYNAMIC_DRAW,
-            );
-
-            gl::VertexAttribPointer(
-                attrib_ptr,
-                3,
-                gl::FLOAT,
-                gl::FALSE,
-                3 * mem::size_of::<f32>() as i32,
-                null(),
-            );
-            gl::EnableVertexAttribArray(0);
-            gl::DrawArrays(gl::TRIANGLES, 0, 6);
-            gl::DisableVertexAttribArray(0);
-
-            gl::Enable(gl::BLEND);
-            gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-            gl::BlendEquation(gl::FUNC_ADD);
-        }
+        self.highlight_coords = hl_coords;
     }
 
     fn queue_text(&mut self, colors: Vec<&Color>, mut x: f32, mut y: f32, sx: f32, sy: f32) {
@@ -466,35 +587,30 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                 s: self.atlas.glyphs[c].tx,
                 t: self.atlas.glyphs[c].ty,
             });
-
             coords.push(Point {
                 x: x2 + width,
                 y: -y2,
                 s: self.atlas.glyphs[c].tx + self.atlas.glyphs[c].bitmap_w / self.atlas.w as f32,
                 t: self.atlas.glyphs[c].ty,
             });
-
             coords.push(Point {
                 x: x2,
                 y: -y2 - height,
                 s: self.atlas.glyphs[c].tx,
                 t: self.atlas.glyphs[c].ty + self.atlas.glyphs[c].bitmap_h / self.atlas.h as f32,
             });
-
             coords.push(Point {
                 x: x2 + width,
                 y: -y2,
                 s: self.atlas.glyphs[c].tx + self.atlas.glyphs[c].bitmap_w / self.atlas.w as f32,
                 t: self.atlas.glyphs[c].ty,
             });
-
             coords.push(Point {
                 x: x2,
                 y: -y2 - height,
                 s: self.atlas.glyphs[c].tx,
                 t: self.atlas.glyphs[c].ty + self.atlas.glyphs[c].bitmap_h / self.atlas.h as f32,
             });
-
             coords.push(Point {
                 x: x2 + width,
                 y: -y2 - height,
@@ -700,6 +816,55 @@ impl CursorShaderProgram {
 }
 
 impl Default for CursorShaderProgram {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct HighlightShaderProgram {
+    program: GLProgram,
+    attrib_ytranslate: GLuint,
+    attrib_xtranslate: GLuint,
+    attrib_apos: GLuint,
+    vbo: GLuint,
+}
+
+impl HighlightShaderProgram {
+    pub fn new() -> Self {
+        let shaders = vec![
+            Shader::from_source(
+                &CString::new(include_str!("../shaders/highlight.v.glsl")).unwrap(),
+                gl::VERTEX_SHADER,
+            )
+            .unwrap(),
+            Shader::from_source(
+                &CString::new(include_str!("../shaders/highlight.f.glsl")).unwrap(),
+                gl::FRAGMENT_SHADER,
+            )
+            .unwrap(),
+        ];
+
+        let program = GLProgram::from_shaders(&shaders).unwrap();
+
+        let mut vbo: GLuint = 0;
+        unsafe { gl::GenBuffers(1, &mut vbo as *mut GLuint) }
+
+        Self {
+            attrib_apos: program.attrib("aPos").unwrap() as u32,
+            attrib_ytranslate: program.attrib("y_translate").unwrap() as u32,
+            attrib_xtranslate: program.attrib("x_translate").unwrap() as u32,
+            program,
+            vbo,
+        }
+    }
+
+    #[inline]
+    pub fn set_used(&self) {
+        self.program.set_used()
+    }
+}
+
+impl Default for HighlightShaderProgram {
     fn default() -> Self {
         Self::new()
     }
