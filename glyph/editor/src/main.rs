@@ -5,9 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use glyph::{
-    EventResult, Window, WindowFrameKind, GITHUB, SCREEN_HEIGHT, SCREEN_WIDTH, TOKYO_NIGHT_STORM,
-};
+use glyph::{EventResult, Window, WindowFrameKind, GITHUB, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 fn main() {
     #[cfg(debug_assertions)]

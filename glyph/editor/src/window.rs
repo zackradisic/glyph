@@ -145,22 +145,10 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                 self.queue_cursor();
                 EventResult::Scroll
             }
-            _ => match self.editor.event(event) {
-                EditorEvent::DrawText => {
-                    self.text_changed = true;
-                    self.last_stroke = time;
-                    self.render_text();
-                    EventResult::Draw
-                }
-                EditorEvent::DrawCursor => {
-                    self.cursor_changed = true;
-                    self.adjust_scroll();
-                    self.queue_cursor();
-                    self.queue_selection(START_X, START_Y, SX, SY);
-                    EventResult::Draw
-                }
-                _ => EventResult::Nothing,
-            },
+            _ => {
+                let evt = self.editor.event(event);
+                self.handle_editor_event(evt, time)
+            }
         }
     }
 }
@@ -220,6 +208,46 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
 
 // This impl contains graphics functions
 impl<'theme, 'highlight> Window<'theme, 'highlight> {
+    #[inline]
+    fn handle_editor_event(&mut self, evt: EditorEvent, time: u32) -> EventResult {
+        match evt {
+            EditorEvent::DrawText => {
+                self.text_changed = true;
+                self.last_stroke = time;
+                self.render_text();
+                EventResult::Draw
+            }
+            EditorEvent::DrawCursor => {
+                self.cursor_changed = true;
+                self.adjust_scroll();
+                self.queue_cursor();
+                EventResult::Draw
+            }
+            EditorEvent::DrawSelection => {
+                self.queue_selection(START_X, START_Y, SX, SY);
+                EventResult::Draw
+            }
+            EditorEvent::Multiple => {
+                let evts = self.editor.take_multiple_event_data();
+                let mut draw = false;
+
+                for evt in evts.into_iter() {
+                    if matches!(self.handle_editor_event(evt, time), EventResult::Draw) {
+                        draw = true;
+                    }
+                }
+
+                if draw {
+                    EventResult::Draw
+                } else {
+                    EventResult::Nothing
+                }
+            }
+
+            _ => EventResult::Nothing,
+        }
+    }
+
     pub fn render_text(&mut self) {
         self.adjust_scroll();
         self.queue_cursor();

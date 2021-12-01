@@ -16,6 +16,7 @@ mod gl_program;
 mod theme;
 mod vim;
 mod window;
+#[derive(Debug)]
 
 pub enum EventResult {
     Nothing,
@@ -24,13 +25,13 @@ pub enum EventResult {
     Quit,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum EditorEvent {
     Nothing,
     DrawText,
     DrawCursor,
     DrawSelection,
-    Multiple(Box<[EditorEvent; 3]>),
+    Multiple,
 }
 
 pub enum MoveWordKind {

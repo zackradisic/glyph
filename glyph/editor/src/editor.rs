@@ -62,6 +62,10 @@ pub struct Editor {
     edits: Vec<Edit>,
     redos: Vec<Edit>,
     edit_vecs: Vec<Vec<char>>,
+
+    /// Store EditorEvent::Multiple data here instead of the enum because
+    /// it bloats the enum's size: 1 byte -> 16 bytes!!!
+    multiple_events_data: [EditorEvent; 3],
 }
 
 fn text_to_lines<I>(text: I) -> Vec<u32>
@@ -109,6 +113,7 @@ impl Editor {
             edits: Vec::new(),
             redos: Vec::new(),
             edit_vecs: Vec::new(),
+            multiple_events_data: [EditorEvent::Nothing; 3],
         }
     }
 
@@ -149,21 +154,31 @@ impl Editor {
 
                 if start == end {
                     self.selection = Some((start as u32, start as u32));
-                    return result;
-                }
-
-                if let Some(ref mut selection) = self.selection {
-                    match start.cmp(&end) {
-                        Ordering::Equal => {}
-                        Ordering::Less | Ordering::Greater => {
-                            selection.1 = end as u32;
+                    self.set_multiple_event_data([
+                        EditorEvent::DrawSelection,
+                        result,
+                        EditorEvent::Nothing,
+                    ]);
+                    EditorEvent::Multiple
+                } else {
+                    if let Some(ref mut selection) = self.selection {
+                        match start.cmp(&end) {
+                            Ordering::Equal => {}
+                            Ordering::Less | Ordering::Greater => {
+                                selection.1 = end as u32;
+                            }
                         }
+                    } else if matches!(self.mode, Mode::Visual) {
+                        unreachable!("Selection should be set when entering visual mode");
                     }
-                } else if matches!(self.mode, Mode::Visual) {
-                    unreachable!("Selection should be set when entering visual mode");
-                }
 
-                result
+                    self.set_multiple_event_data([
+                        EditorEvent::DrawSelection,
+                        result,
+                        EditorEvent::Nothing,
+                    ]);
+                    EditorEvent::Multiple
+                }
             }
         }
     }
@@ -1189,6 +1204,16 @@ impl Editor {
             _ if !skip_punctuation => !c.is_alphanumeric(),
             _ => false,
         }
+    }
+
+    #[inline]
+    pub fn take_multiple_event_data(&mut self) -> [EditorEvent; 3] {
+        std::mem::replace(&mut self.multiple_events_data, [EditorEvent::Nothing; 3])
+    }
+
+    #[inline]
+    fn set_multiple_event_data(&mut self, evts: [EditorEvent; 3]) {
+        self.multiple_events_data = evts;
     }
 }
 
