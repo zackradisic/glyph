@@ -2,7 +2,8 @@
 members = [
 	"editor",
 	"macros",
-	"syntax"
+	"syntax",
+	"lsp"
 ]
 
 [patch.crates-io]

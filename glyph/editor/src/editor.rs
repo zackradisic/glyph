@@ -1373,7 +1373,7 @@ mod tests {
 
                 editor.delete_range(start..end);
                 assert_eq!(editor.text_str().unwrap(), "");
-                assert_eq!(editor.lines, vec![]);
+                assert_eq!(editor.lines, Vec::<u32>::new());
             }
         }
 

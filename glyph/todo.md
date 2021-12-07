@@ -4,6 +4,11 @@
     * ~~Visual mode~~
     * ~~Undo/redo~~
 2. LSP support (at this point Glyph can replace my main editor)
+    * Diagnostics
+    * Go to definition
+    * Code actions
+    * Suggestions
+    * Hover buffer for peek definition
 3. Other niceties
     * File tree
     * Vim surround

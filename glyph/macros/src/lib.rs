@@ -88,3 +88,73 @@ pub fn make_highlights(stream: TokenStream) -> TokenStream {
     stream.extend(TokenStream::from(array_tokens));
     stream
 }
+
+#[proc_macro]
+pub fn make_request(stream: TokenStream) -> TokenStream {
+    let mut req_tt = quote! {};
+    let mut count: u8 = 0;
+
+    for tt in stream.into_iter() {
+        if let TokenTree::Ident(ident) = tt {
+            count += 1;
+            let ident = format_ident!("{}", ident.to_string());
+            req_tt = quote! {
+                #req_tt
+                #ident,
+            }
+        }
+    }
+
+    let req_tt = req_tt;
+    TokenStream::from(quote! {
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        pub enum Request {
+            #req_tt
+        }
+
+        impl Request {
+            fn from_u8(val: u8) -> Result<Self, anyhow::Error> {
+                if val >= #count {
+                    Err(anyhow::anyhow!("Invalid value: {}", val))
+                } else {
+                    unsafe { Ok(std::mem::transmute::<u8, Request>(val)) }
+                }
+            }
+        }
+    })
+}
+
+#[proc_macro]
+pub fn make_notification(stream: TokenStream) -> TokenStream {
+    let mut req_tt = quote! {};
+    let mut count: u8 = 0;
+
+    for tt in stream.into_iter() {
+        if let TokenTree::Ident(ident) = tt {
+            count += 1;
+            let ident = format_ident!("{}", ident.to_string());
+            req_tt = quote! {
+                #req_tt
+                #ident,
+            }
+        }
+    }
+
+    let req_tt = req_tt;
+    TokenStream::from(quote! {
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        pub enum Notification {
+            #req_tt
+        }
+
+        impl Notification {
+            fn from_u8(val: u8) -> Result<Self, anyhow::Error> {
+                if val >= #count {
+                    Err(anyhow::anyhow!("Invalid value: {}", val))
+                } else {
+                    unsafe { Ok(std::mem::transmute::<u8, Notification>(val)) }
+                }
+            }
+        }
+    })
+}

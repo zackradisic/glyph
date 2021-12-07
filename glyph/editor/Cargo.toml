@@ -10,3 +10,4 @@ once_cell = "1.8.0"
 ropey = "1.3.1"
 sdl2 = "0.35.1"
 syntax = { path = "../syntax" }
+lsp = { path = "../lsp" }
