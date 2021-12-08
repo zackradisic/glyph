@@ -101,9 +101,12 @@ pub enum MessageKind {
 
 pub trait Message {
     fn to_bytes(&self) -> Result<Vec<u8>, Error>;
+
     // Return ID and request type, used for
     // keeping track of responses for deserialization
-    fn request(&self) -> Option<(u8, Request)>;
+    fn request(&self) -> Option<Request>;
+
+    fn set_id(&mut self, id: u8);
 }
 
 #[derive(Serialize)]
@@ -123,9 +126,11 @@ where
         serialize_with_content_length(self)
     }
 
-    fn request(&self) -> Option<(u8, Request)> {
+    fn request(&self) -> Option<Request> {
         None
     }
+
+    fn set_id(&mut self, _: u8) {}
 }
 
 impl<'a, P> NotifMessage<'a, P>
@@ -160,8 +165,12 @@ where
         serialize_with_content_length(self)
     }
 
-    fn request(&self) -> Option<(u8, Request)> {
-        Some((self.id, self.kind))
+    fn request(&self) -> Option<Request> {
+        Some(self.kind)
+    }
+
+    fn set_id(&mut self, id: u8) {
+        self.id = id;
     }
 }
 

@@ -35,31 +35,18 @@ pub enum Either<L, R> {
 
 #[derive(Clone)]
 pub struct LspSender {
-    tx: Sender<Vec<u8>>,
+    tx: Sender<Box<dyn Message + Send>>,
 }
 
 impl LspSender {
-    pub fn wrap(tx: Sender<Vec<u8>>) -> Self {
+    pub fn wrap(tx: Sender<Box<dyn Message + Send>>) -> Self {
         Self { tx }
     }
 
-    pub fn send_message<T: Message>(&self, data: Either<Vec<u8>, &T>) {
-        use Either::*;
-        let data = match data {
-            Left(data) => data,
-            Right(se) => se.to_bytes().unwrap(),
-        };
-
+    pub fn send_message(&self, data: Box<dyn Message + Send>) {
         self.tx.send(data).unwrap()
     }
 }
-
-// {
-//                 let mut req_ids = self.request_ids.write().unwrap();
-//                 let mut req_id_counter = self.req_id_counter.write().unwrap();
-//                 *req_id_counter += 1;
-//                 req_ids.insert(*req_id_counter, Request::Initialize)
-//             }
 
 pub struct Client {
     diagnostics: Arc<RwLock<Vec<Diagnostic>>>,
@@ -89,13 +76,14 @@ impl Client {
             .current_dir(cwd)
             .spawn()
             .unwrap();
-        let msg = ReqMessage::new(
+
+        let msg = Box::new(ReqMessage::new(
             "initialize",
             Self::initialize_params(cmd.id(), cwd),
             Request::Initialize,
-        );
+        ));
 
-        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let (tx, rx) = mpsc::channel::<Box<dyn Message + Send>>();
         let tx = LspSender::wrap(tx);
         let stdin = cmd.stdin.take().unwrap();
         let stdout = NonBlockingReader::from_fd(cmd.stdout.take().unwrap()).unwrap();
@@ -127,12 +115,12 @@ impl Client {
             child: cmd,
         };
 
-        s.tx.send_message(Either::Right(&msg));
+        s.tx.send_message(msg);
 
         s
     }
 
-    pub fn send_message<T: Message>(&self, data: Either<Vec<u8>, &T>) {
+    pub fn send_message<T: Message>(&self, data: Box<dyn Message + Send>) {
         self.tx.send_message(data)
     }
 
@@ -183,9 +171,16 @@ struct Inner {
 
 // Functions that execute in threads
 impl Inner {
-    fn stdin(&self, rx: Receiver<Vec<u8>>, mut stdin: ChildStdin) {
-        for msg in rx {
-            stdin.write_all(&msg).unwrap();
+    fn stdin(&self, rx: Receiver<Box<dyn Message + Send>>, mut stdin: ChildStdin) {
+        for mut msg in rx {
+            if let Some(req) = msg.request() {
+                let mut req_ids = self.request_ids.write().unwrap();
+                let mut req_id_counter = self.req_id_counter.write().unwrap();
+                *req_id_counter += 1;
+                msg.set_id(*req_id_counter as u8);
+                req_ids.insert(*req_id_counter, req);
+            }
+            stdin.write_all(&msg.to_bytes().unwrap()).unwrap();
         }
     }
 
@@ -277,12 +272,12 @@ impl Inner {
     }
 
     fn initialized(&self, _result: InitializeResult) {
-        let msg = NotifMessage::new(
+        let msg = Box::new(NotifMessage::new(
             "initialized",
             Some(InitializedParams {}),
             Notification::Initialized,
-        );
-        self.tx.send_message(Either::Right(&msg));
+        ));
+        self.tx.send_message(msg);
     }
 }
 
