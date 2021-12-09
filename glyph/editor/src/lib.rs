@@ -50,8 +50,22 @@ pub struct MoveWord {
     pub skip_punctuation: bool,
 }
 
+pub const ERROR_RED: Color = Color {
+    r: 215,
+    g: 0,
+    b: 21,
+    a: 255,
+};
+
+pub const HIGHLIGHT_BLUE: Color = Color {
+    r: 15,
+    g: 191,
+    b: 255,
+    a: 51,
+};
+
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -84,7 +98,6 @@ impl Color {
             .enumerate()
         {
             let c = c.0.to_digit(16).unwrap() << 4 | c.1.to_digit(16).unwrap();
-            println!("val: {}", c as u8);
             rgba[i] = c as u8;
         }
         rgba

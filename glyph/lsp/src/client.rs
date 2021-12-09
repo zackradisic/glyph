@@ -9,7 +9,7 @@ use std::{
         mpsc::{self, Receiver, Sender},
         Arc, RwLock,
     },
-    thread::{self, JoinHandle},
+    thread::{self},
 };
 
 use bytes::BytesMut;
@@ -35,6 +35,7 @@ pub enum Either<L, R> {
 
 #[derive(Clone)]
 pub struct LspSender {
+    // TODO: Get rid of dynamic dispatch
     tx: Sender<Box<dyn Message + Send>>,
 }
 
@@ -48,8 +49,34 @@ impl LspSender {
     }
 }
 
+#[derive(Debug)]
+pub struct Diagnostics {
+    pub diagnostics: Vec<Diagnostic>,
+    pub clock: u64,
+}
+
+impl Diagnostics {
+    pub fn new() -> Self {
+        Self {
+            diagnostics: Vec::new(),
+            clock: 1,
+        }
+    }
+
+    pub fn update(&mut self, diagnostics: Vec<Diagnostic>) {
+        self.diagnostics = diagnostics;
+        self.clock += 1;
+    }
+}
+
+impl Default for Diagnostics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Client {
-    diagnostics: Arc<RwLock<Vec<Diagnostic>>>,
+    diagnostics: Arc<RwLock<Diagnostics>>,
     tx: LspSender,
     in_thread_id: u64,
     out_thread_id: u64,
@@ -68,7 +95,7 @@ impl Drop for Client {
 
 impl Client {
     pub fn new<T: AsRef<OsStr>>(cmd_path: T, cwd: &str) -> Self {
-        let diagnostics = Arc::new(RwLock::new(Vec::new()));
+        let diagnostics = Arc::new(RwLock::new(Diagnostics::new()));
 
         let mut cmd = Command::new(cmd_path)
             .stdin(Stdio::piped())
@@ -120,12 +147,8 @@ impl Client {
         s
     }
 
-    pub fn send_message<T: Message>(&self, data: Box<dyn Message + Send>) {
+    pub fn send_message(&self, data: Box<dyn Message + Send>) {
         self.tx.send_message(data)
-    }
-
-    pub fn diagnostics(&self) -> &Arc<RwLock<Vec<Diagnostic>>> {
-        &self.diagnostics
     }
 
     fn initialize_params(process_id: u32, cwd: &str) -> InitializeParams {
@@ -159,11 +182,19 @@ impl Client {
             root_path: None,
         }
     }
+
+    pub fn diagnostics(&self) -> &Arc<RwLock<Diagnostics>> {
+        &self.diagnostics
+    }
+
+    pub fn sender(&self) -> &LspSender {
+        &self.tx
+    }
 }
 
 #[derive(Clone)]
 struct Inner {
-    diagnostics: Arc<RwLock<Vec<Diagnostic>>>,
+    diagnostics: Arc<RwLock<Diagnostics>>,
     request_ids: Arc<RwLock<HashMap<u16, Request>>>,
     req_id_counter: Arc<RwLock<u16>>,
     tx: LspSender,
@@ -297,9 +328,9 @@ impl Inner {
         let params: PublishDiagnosticsParams = Self::from_value(params)?;
 
         let mut diagnostics = self.diagnostics.write().unwrap();
-        let _old = std::mem::replace(&mut *diagnostics, params.diagnostics);
+        diagnostics.update(params.diagnostics);
 
-        println!("DIAGNOSTICS: {:?}", *diagnostics);
+        println!("DIAGNOSTICS: {:?}", diagnostics.diagnostics);
 
         Ok(())
     }

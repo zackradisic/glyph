@@ -2,9 +2,11 @@ use std::{
     ffi::{c_void, CString},
     mem,
     ptr::null,
+    sync::{Arc, RwLock},
 };
 
 use gl::types::{GLint, GLsizeiptr, GLuint, GLvoid};
+use lsp::{Client, Diagnostics, LspSender};
 use once_cell::sync::Lazy;
 use sdl2::{
     event::Event,
@@ -15,7 +17,7 @@ use syntax::Highlight;
 
 use crate::{
     atlas::Atlas, Color, Editor, EditorEvent, EventResult, GLProgram, Shader, ThemeType,
-    WindowFrameKind, SCREEN_HEIGHT, SCREEN_WIDTH,
+    WindowFrameKind, ERROR_RED, SCREEN_HEIGHT, SCREEN_WIDTH,
 };
 
 #[repr(C)]
@@ -72,11 +74,14 @@ pub struct Window<'theme, 'highlight> {
     text_shader: TextShaderProgram,
     cursor_shader: CursorShaderProgram,
     highlight_shader: HighlightShaderProgram,
+    diagnostic_shader: DiagnosticShaderProgram,
     editor: Editor,
     text_coords: Vec<Point>,
     text_colors: Vec<Color>,
     cursor_coords: [Point3; 6],
     highlight_coords: Vec<Point3>,
+    diagnostics_coords: Vec<Point3>,
+    diagnostics_colors: Vec<Color>,
     y_offset: f32,
     x_offset: f32,
     text_height: f32,
@@ -89,31 +94,45 @@ pub struct Window<'theme, 'highlight> {
     highlight_cfg: &'highlight Lazy<HighlightConfiguration>,
     text_changed: bool,
     cursor_changed: bool,
+
+    // LSP
+    diagnostics: Arc<RwLock<Diagnostics>>,
+    lsp_send: LspSender,
+    last_clock: u64,
 }
 
 impl<'theme, 'highlight> Window<'theme, 'highlight> {
-    pub fn new(initial_text: Option<String>, theme: &'theme ThemeType) -> Self {
+    pub fn new(
+        initial_text: Option<String>,
+        theme: &'theme ThemeType,
+        lsp_client: &Client,
+    ) -> Self {
         let font_path = "./fonts/FiraCode.ttf";
-        let ft_lib = freetype::Library::init().unwrap();
-        let mut face = ft_lib.new_face(font_path, 0).unwrap();
 
         let text_shader = TextShaderProgram::default();
-        let atlas = Atlas::new(&mut face, 48, text_shader.uniform_tex).unwrap();
+        let atlas = Atlas::new(font_path, 48, text_shader.uniform_tex).unwrap();
         let cursor_shader = CursorShaderProgram::default();
         let highlight_shader = HighlightShaderProgram::default();
+        let diagnostic_shader = DiagnosticShaderProgram::default();
 
         let highlighter = Highlighter::new();
+
+        let mut editor = Editor::with_text(initial_text);
+        editor.configure_lsp(lsp_client);
 
         Self {
             atlas,
             text_shader,
             cursor_shader,
             highlight_shader,
-            editor: Editor::with_text(initial_text),
+            diagnostic_shader,
+            editor,
             text_coords: Vec::new(),
             text_colors: Vec::new(),
             cursor_coords: Default::default(),
             highlight_coords: Default::default(),
+            diagnostics_coords: Default::default(),
+            diagnostics_colors: Vec::new(),
             y_offset: 0.0,
             x_offset: 0.0,
             text_height: 0.0,
@@ -125,6 +144,10 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
             highlight_cfg: &syntax::RUST_CFG,
             text_changed: false,
             cursor_changed: false,
+
+            diagnostics: lsp_client.diagnostics().clone(),
+            lsp_send: lsp_client.sender().clone(),
+            last_clock: 0,
         }
     }
 
@@ -307,6 +330,7 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
 
         // Draw text
         unsafe {
+            // TODO: X and Y translation can be global (make it a uniform)
             gl::VertexAttrib1f(self.text_shader.attrib_ytranslate, SY * self.y_offset);
             gl::VertexAttrib1f(self.text_shader.attrib_xtranslate, self.x_offset * SX);
 
@@ -367,7 +391,6 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                 gl::VertexAttrib1f(self.highlight_shader.attrib_xtranslate, self.x_offset * SX);
 
                 gl::BindBuffer(gl::ARRAY_BUFFER, self.highlight_shader.vbo);
-
                 if draw {
                     gl::BufferData(
                         gl::ARRAY_BUFFER,
@@ -376,7 +399,6 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                         gl::DYNAMIC_DRAW,
                     );
                 }
-
                 gl::VertexAttribPointer(
                     attrib_ptr,
                     3,
@@ -386,8 +408,60 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                     null(),
                 );
                 gl::EnableVertexAttribArray(0);
-                gl::DrawArrays(gl::TRIANGLES, 0, self.highlight_coords.len() as i32 * 3);
+
+                gl::DrawArrays(gl::TRIANGLES, 0, self.highlight_coords.len() as i32);
                 gl::DisableVertexAttribArray(0);
+            }
+        }
+        // Draw diagnostics
+        {
+            self.diagnostic_shader.set_used();
+            unsafe {
+                gl::VertexAttrib1f(self.diagnostic_shader.attrib_ytranslate, self.y_offset * SY);
+                gl::VertexAttrib1f(self.diagnostic_shader.attrib_xtranslate, self.x_offset * SX);
+
+                // Coords
+                gl::BindBuffer(gl::ARRAY_BUFFER, self.diagnostic_shader.vbo);
+                if draw {
+                    gl::BufferData(
+                        gl::ARRAY_BUFFER,
+                        (self.diagnostics_coords.len() * mem::size_of::<Point3>()) as isize,
+                        self.diagnostics_coords.as_ptr() as *const c_void,
+                        gl::DYNAMIC_DRAW,
+                    );
+                }
+                gl::VertexAttribPointer(
+                    self.diagnostic_shader.attrib_apos,
+                    3,
+                    gl::FLOAT,
+                    gl::FALSE,
+                    mem::size_of::<Point3>() as i32,
+                    null(),
+                );
+                // Color
+                gl::BindBuffer(gl::ARRAY_BUFFER, self.diagnostic_shader.vbo_color);
+                if draw {
+                    gl::BufferData(
+                        gl::ARRAY_BUFFER,
+                        (self.diagnostics_colors.len() * mem::size_of::<Color>()) as isize,
+                        self.diagnostics_colors.as_ptr() as *const c_void,
+                        gl::DYNAMIC_DRAW,
+                    );
+                }
+                gl::VertexAttribPointer(
+                    self.diagnostic_shader.attrib_color,
+                    4,
+                    gl::UNSIGNED_BYTE,
+                    gl::TRUE,
+                    0,
+                    null(),
+                );
+
+                gl::EnableVertexAttribArray(self.diagnostic_shader.attrib_apos);
+                gl::EnableVertexAttribArray(self.diagnostic_shader.attrib_color);
+                gl::DrawArrays(gl::TRIANGLES, 0, self.diagnostics_coords.len() as i32);
+                gl::DisableVertexAttribArray(self.diagnostic_shader.attrib_apos);
+                gl::DisableVertexAttribArray(self.diagnostic_shader.attrib_color);
             }
         }
 
@@ -443,20 +517,179 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
         }
     }
 
-    /// TODO: Abstract char-glyph iteration logic shared by `queue_selection()` and
-    /// `queue_text()` into a common Iterator
+    pub fn queue_diagnostics(&mut self) {
+        let d = self.diagnostics.read().unwrap();
+        if self.last_clock != d.clock {
+            let mut coords: Vec<Point3> = Vec::new();
+            let mut colors: Vec<Color> = Vec::new();
+
+            let mut col = 0;
+            for diag in &d.diagnostics {
+                let max_w = self.atlas.max_w * SX;
+                let max_h = self.atlas.max_h;
+
+                let mut x = START_X;
+                let mut y = START_Y;
+
+                let mut top_left: Point3 = Point3::null();
+                let mut bot_left: Point3 = Point3::null();
+
+                let lsp::Range {
+                    start: start_pos,
+                    end: end_pos,
+                } = diag.range;
+                let start = self.editor.line_idx(start_pos.line as usize);
+                let end = self
+                    .editor
+                    .line_char_idx(end_pos.line as usize, end_pos.character as usize);
+
+                let within_range = |i: usize| -> bool {
+                    (i + start) >= (start + start_pos.character as usize) && (i + start) < end
+                };
+
+                for (i, ch) in self.editor.text(start..(end + 1)).chars().enumerate() {
+                    let c = ch as usize;
+
+                    // Calculate the vertex and texture coordinates
+                    let x2 = x + (col as f32 * max_w);
+                    // let x2 = x + max_w;
+                    let y2 = -y;
+                    let width = self.atlas.glyphs[c].bitmap_w * SX;
+                    let height = self.atlas.glyphs[c].bitmap_h * SY;
+
+                    // Skip glyphs that have no pixels
+                    if (width == 0.0 || height == 0.0) && !within_range(i) {
+                        match ch as u8 {
+                            32 => {
+                                col += 1;
+                            }
+                            // Tab
+                            9 => {
+                                x += self.atlas.max_w * SY * 4f32;
+                                col += 4;
+                            }
+                            // New line
+                            10 => {
+                                y -= max_h;
+                                x = START_X;
+                                if !top_left.is_null() {
+                                    let bot_right = Point3 {
+                                        x: x2,
+                                        y: -y2 + max_h,
+                                        z: 0.0,
+                                    };
+                                    let top_right = Point3 {
+                                        x: x2,
+                                        y: -y2,
+                                        z: 0.0,
+                                    };
+                                    // First triangle
+                                    coords.push(top_left.clone());
+                                    coords.push(bot_left.clone());
+                                    coords.push(bot_right.clone());
+                                    // Second triangle
+                                    coords.push(top_left.clone());
+                                    coords.push(top_right);
+                                    coords.push(bot_right);
+                                    colors.push(ERROR_RED);
+                                    colors.push(ERROR_RED);
+                                    colors.push(ERROR_RED);
+                                    colors.push(ERROR_RED);
+                                    colors.push(ERROR_RED);
+                                    colors.push(ERROR_RED);
+
+                                    top_left = Point3::null();
+                                    bot_left = Point3::null();
+                                }
+                                col = 0;
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
+                    if top_left.is_null() && within_range(i) {
+                        top_left = Point3 {
+                            x: x2,
+                            y: -y2,
+                            z: 0.0,
+                        };
+                        bot_left = Point3 {
+                            x: x2,
+                            y: -y2 + max_h,
+                            z: 0.0,
+                        };
+                    } else if !top_left.is_null() && !within_range(i) {
+                        let bot_right = Point3 {
+                            x: x2,
+                            y: -y2 + max_h,
+                            z: 0.0,
+                        };
+                        let top_right = Point3 {
+                            x: x2,
+                            y: -y2,
+                            z: 0.0,
+                        };
+                        // First triangle
+                        coords.push(top_left.clone());
+                        coords.push(bot_left.clone());
+                        coords.push(bot_right.clone());
+                        // Second triangle
+                        coords.push(top_left.clone());
+                        coords.push(top_right);
+                        coords.push(bot_right);
+                        colors.push(ERROR_RED);
+                        colors.push(ERROR_RED);
+                        colors.push(ERROR_RED);
+                        colors.push(ERROR_RED);
+                        colors.push(ERROR_RED);
+                        colors.push(ERROR_RED);
+                        break;
+                    } else if i + start >= end {
+                        println!("BREKING");
+                        if !top_left.is_null() {
+                            let bot_right = Point3 {
+                                x: x2,
+                                y: -y2 + max_h,
+                                z: 0.0,
+                            };
+                            let top_right = Point3 {
+                                x: x2,
+                                y: -y2,
+                                z: 0.0,
+                            };
+                            // First triangle
+                            coords.push(top_left.clone());
+                            coords.push(bot_left.clone());
+                            coords.push(bot_right.clone());
+                            // Second triangle
+                            coords.push(top_left.clone());
+                            coords.push(top_right);
+                            coords.push(bot_right);
+                            colors.push(ERROR_RED);
+                            colors.push(ERROR_RED);
+                            colors.push(ERROR_RED);
+                            colors.push(ERROR_RED);
+                            colors.push(ERROR_RED);
+                            colors.push(ERROR_RED);
+                        }
+                        break;
+                    }
+                    col += 1;
+                }
+            }
+
+            self.diagnostics_coords = coords;
+            self.diagnostics_colors = colors;
+            self.last_clock = d.clock;
+        }
+    }
+
     fn queue_selection(&mut self, mut x: f32, mut y: f32, sx: f32, sy: f32) {
         if self.editor.selection().is_none() {
             self.highlight_coords.clear();
             return;
         }
-        // println!(
-        //     "Selection: {:?} last_char {}",
-        //     self.editor.selection(),
-        //     self.editor
-        //         .text_all()
-        //         .char(self.editor.selection().unwrap().1 as usize)
-        // );
 
         let mut hl_coords: Vec<Point3> = Vec::new();
 
@@ -646,12 +879,12 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                 t: self.atlas.glyphs[c].ty + self.atlas.glyphs[c].bitmap_h / self.atlas.h as f32,
             });
 
-            colors_vertex.push(colors[i].clone());
-            colors_vertex.push(colors[i].clone());
-            colors_vertex.push(colors[i].clone());
-            colors_vertex.push(colors[i].clone());
-            colors_vertex.push(colors[i].clone());
-            colors_vertex.push(colors[i].clone());
+            colors_vertex.push(*colors[i]);
+            colors_vertex.push(*colors[i]);
+            colors_vertex.push(*colors[i]);
+            colors_vertex.push(*colors[i]);
+            colors_vertex.push(*colors[i]);
+            colors_vertex.push(*colors[i]);
         }
 
         // TODO: It's faster to directly mutate these vecs instead of making
@@ -893,6 +1126,63 @@ impl HighlightShaderProgram {
 }
 
 impl Default for HighlightShaderProgram {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct DiagnosticShaderProgram {
+    program: GLProgram,
+    attrib_color: GLuint,
+    attrib_ytranslate: GLuint,
+    attrib_xtranslate: GLuint,
+    attrib_apos: GLuint,
+    vbo: GLuint,
+    vbo_color: GLuint,
+}
+
+impl DiagnosticShaderProgram {
+    pub fn new() -> Self {
+        let shaders = vec![
+            Shader::from_source(
+                &CString::new(include_str!("../shaders/diagnostic.v.glsl")).unwrap(),
+                gl::VERTEX_SHADER,
+            )
+            .unwrap(),
+            Shader::from_source(
+                &CString::new(include_str!("../shaders/diagnostic.f.glsl")).unwrap(),
+                gl::FRAGMENT_SHADER,
+            )
+            .unwrap(),
+        ];
+
+        let program = GLProgram::from_shaders(&shaders).unwrap();
+
+        let mut vbo = 0;
+        let mut vbo_color = 0;
+        unsafe {
+            gl::GenBuffers(1, &mut vbo as *mut GLuint);
+            gl::GenBuffers(1, &mut vbo_color as *mut GLuint);
+        }
+
+        Self {
+            attrib_apos: program.attrib("aPos").unwrap() as u32,
+            attrib_color: program.attrib("vertex_color").unwrap() as u32,
+            attrib_ytranslate: program.attrib("y_translate").unwrap() as u32,
+            attrib_xtranslate: program.attrib("x_translate").unwrap() as u32,
+            program,
+            vbo,
+            vbo_color,
+        }
+    }
+
+    #[inline]
+    pub fn set_used(&self) {
+        self.program.set_used()
+    }
+}
+
+impl Default for DiagnosticShaderProgram {
     fn default() -> Self {
         Self::new()
     }

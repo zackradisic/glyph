@@ -1,3 +1,4 @@
+use lsp::{Client, LspSender};
 use ropey::{Rope, RopeSlice};
 use sdl2::{event::Event, keyboard::Keycode};
 use std::{cell::Cell, cmp::Ordering, ops::Range};
@@ -66,6 +67,8 @@ pub struct Editor {
     /// Store EditorEvent::Multiple data here instead of the enum because
     /// it bloats the enum's size: 1 byte -> 16 bytes!!!
     multiple_events_data: [EditorEvent; 3],
+
+    lsp_sender: Option<LspSender>,
 }
 
 fn text_to_lines<I>(text: I) -> Vec<u32>
@@ -114,11 +117,16 @@ impl Editor {
             redos: Vec::new(),
             edit_vecs: Vec::new(),
             multiple_events_data: [EditorEvent::Nothing; 3],
+            lsp_sender: None,
         }
     }
 
     pub fn new() -> Self {
         Editor::with_text(None)
+    }
+
+    pub fn configure_lsp(&mut self, lsp_client: &Client) {
+        self.lsp_sender = Some(lsp_client.sender().clone())
     }
 
     pub fn event(&mut self, event: Event) -> EditorEvent {
@@ -1117,6 +1125,16 @@ impl Editor {
     }
 
     #[inline]
+    pub fn text_line_col(&self, range_start: lsp::Position, range_end: lsp::Position) -> RopeSlice {
+        // Needs to be at the start of the line because when drawing diagnostics
+        // we need to calculate the width from beginning since some chars might
+        // have different widths
+        let start = self.text.line_to_char(range_start.line as usize);
+        let end = self.text.line_to_char(range_end.line as usize) + range_end.character as usize;
+        self.text.slice(start..end)
+    }
+
+    #[inline]
     pub fn text_all(&self) -> RopeSlice {
         self.text.slice(0..self.text.len_chars())
     }
@@ -1214,6 +1232,16 @@ impl Editor {
     #[inline]
     fn set_multiple_event_data(&mut self, evts: [EditorEvent; 3]) {
         self.multiple_events_data = evts;
+    }
+
+    #[inline]
+    pub fn line_idx(&self, line: usize) -> usize {
+        self.text.line_to_char(line)
+    }
+
+    #[inline]
+    pub fn line_char_idx(&self, line: usize, char: usize) -> usize {
+        self.line_idx(line) + char
     }
 }
 

@@ -1,6 +1,5 @@
 use std::ptr::null;
 
-use freetype::Face;
 use gl::types::{GLint, GLuint, GLvoid};
 
 use crate::constants::MAX_WIDTH;
@@ -44,7 +43,9 @@ pub struct Atlas {
 const CHAR_END: usize = 128;
 
 impl Atlas {
-    pub fn new(face: &mut Face, height: u32, uniform_tex: GLint) -> Result<Self, String> {
+    pub fn new(font_path: &str, height: u32, uniform_tex: GLint) -> Result<Self, String> {
+        let ft_lib = freetype::Library::init().unwrap();
+        let face = ft_lib.new_face(font_path, 0).unwrap();
         let mut tex: GLuint = 0;
 
         face.set_pixel_sizes(0, height).map_err(|e| e.to_string())?;

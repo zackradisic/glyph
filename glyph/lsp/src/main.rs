@@ -4,9 +4,6 @@ use lsp::{Client, Either, Message, MessageKind, NotifMessage, Notification, ReqM
 use lsp_types::{DidOpenTextDocumentParams, TextDocumentItem, Url};
 
 fn main() {
-    println!("HI");
-    let srcdir = PathBuf::from("/Users/zackradisic/Desktop/Code/lsp-test-workspace");
-    println!("{:?}", fs::canonicalize(&srcdir));
     let client = Client::new(
         "/usr/local/bin/rust-analyzer",
         "/Users/zackradisic/Desktop/Code/lsp-test-workspace",
@@ -34,7 +31,7 @@ fn main() {
     );
 
     std::thread::sleep(Duration::from_millis(3000));
-    client.send_message(Either::Right(&notif));
+    client.send_message(Box::new(notif));
 
     std::thread::sleep(Duration::from_millis(10000));
 }

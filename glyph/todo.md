@@ -17,6 +17,12 @@
 
 
 # Future niceties 
+
+## Clean up window.rs?
+Getting kind of big.
+
+## Make x and y translations uniforms
+
 ## Resizing
 Seems simple enough, handle the SDL event and capture the updated size. Use this to
 update the global variables. Not a priority for me, not resizing frequently enough.

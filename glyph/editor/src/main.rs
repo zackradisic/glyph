@@ -6,6 +6,7 @@ use std::{
 };
 
 use glyph::{EventResult, Window, WindowFrameKind, GITHUB, SCREEN_HEIGHT, SCREEN_WIDTH};
+use lsp::Client;
 
 fn main() {
     #[cfg(debug_assertions)]
@@ -13,7 +14,7 @@ fn main() {
     #[cfg(not(debug_assertions))]
     let filepath_idx = 1;
 
-    let filepath = std::env::args()
+    let initial_text = std::env::args()
         .nth(filepath_idx)
         .map(|path| fs::read_to_string(path).unwrap());
 
@@ -55,7 +56,12 @@ fn main() {
         gl::Clear(gl::COLOR_BUFFER_BIT);
     }
 
-    let mut editor_window = Window::new(filepath, &GITHUB);
+    let lsp_client = Client::new(
+        "/usr/local/bin/rust-analyzer",
+        "/Users/zackradisic/Desktop/Code/lsp-test-workspace",
+    );
+
+    let mut editor_window = Window::new(initial_text, &GITHUB, &lsp_client);
     editor_window.render_text();
     window.gl_swap_window();
 
@@ -98,6 +104,8 @@ fn main() {
                 }
             }
         }
+
+        editor_window.queue_diagnostics();
 
         frames += 1;
         if draw {
