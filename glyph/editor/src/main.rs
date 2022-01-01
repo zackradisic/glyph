@@ -10,7 +10,7 @@ use lsp::Client;
 
 fn main() {
     #[cfg(debug_assertions)]
-    let filepath_idx = 2;
+    let filepath_idx = 1;
     #[cfg(not(debug_assertions))]
     let filepath_idx = 1;
 

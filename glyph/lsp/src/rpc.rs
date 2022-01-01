@@ -2,9 +2,14 @@ use anyhow::{anyhow, Error, Result};
 
 use bytes::{Buf, BytesMut};
 use combine::{easy, parser::combinator::AnySendPartialState, stream::PartialStream};
+use common::Edit;
 use jsonrpc_core::{
     serde_from_str, Notification as JsonNotification, Request as JsonRequest,
     Response as JsonResponse,
+};
+use lsp_types::{
+    DidChangeTextDocumentParams, DidOpenTextDocumentParams, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentItem, Url, VersionedTextDocumentIdentifier,
 };
 use macros::{make_notification, make_request};
 use serde::{de::DeserializeOwned, Serialize};
@@ -99,7 +104,7 @@ pub enum MessageKind {
     Unknown,
 }
 
-pub trait Message {
+pub trait Message: std::fmt::Debug {
     fn to_bytes(&self) -> Result<Vec<u8>, Error>;
 
     // Return ID and request type, used for
@@ -109,7 +114,7 @@ pub trait Message {
     fn set_id(&mut self, id: u8);
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct NotifMessage<'a, P> {
     jsonrpc: &'static str,
     method: &'a str,
@@ -120,7 +125,7 @@ pub struct NotifMessage<'a, P> {
 
 impl<'a, P> Message for NotifMessage<'a, P>
 where
-    P: DeserializeOwned + Serialize,
+    P: DeserializeOwned + Serialize + std::fmt::Debug,
 {
     fn to_bytes(&self) -> Result<Vec<u8>, Error> {
         serialize_with_content_length(self)
@@ -147,7 +152,29 @@ where
     }
 }
 
-#[derive(Serialize)]
+impl<'a> NotifMessage<'a, DidChangeTextDocumentParams> {
+    pub fn from_edit(edit: &Edit, text_document: VersionedTextDocumentIdentifier) -> Self {
+        Self {
+            jsonrpc: JSONRPC_VERSION,
+            method: "textDocument/didChange",
+            params: Some(DidChangeTextDocumentParams {
+                text_document,
+                content_changes: vec![],
+            }),
+            kind: Notification::TextDocDidChange,
+        }
+    }
+}
+
+// pub fn edit_to_doc_change_event(edit: &Edit) -> TextDocumentContentChangeEvent {
+//     TextDocumentContentChangeEvent {
+//         range: ,
+//         range_length: None,
+//         text: edit.new_text.clone(),
+//     }
+// }
+
+#[derive(Serialize, Debug)]
 pub struct ReqMessage<'a, P> {
     jsonrpc: &'static str,
     method: &'a str,
@@ -159,7 +186,7 @@ pub struct ReqMessage<'a, P> {
 
 impl<'a, P> Message for ReqMessage<'a, P>
 where
-    P: DeserializeOwned + Serialize,
+    P: DeserializeOwned + Serialize + std::fmt::Debug,
 {
     fn to_bytes(&self) -> Result<Vec<u8>, Error> {
         serialize_with_content_length(self)
@@ -213,4 +240,29 @@ pub fn serialize_with_content_length<P: Serialize>(val: &P) -> Result<Vec<u8>, E
 }
 
 make_request!(Initialize, TextDocDefinition);
-make_notification!(Initialized, TextDocDidOpen, TextDocDidClose);
+make_notification!(
+    Initialized,
+    TextDocDidOpen,
+    TextDocDidClose,
+    TextDocDidChange
+);
+
+pub fn text_doc_did_open<'a>(
+    uri: Url,
+    language_id: String,
+    version: i32,
+    text: String,
+) -> NotifMessage<'a, DidOpenTextDocumentParams> {
+    NotifMessage::new(
+        "textDocument/didOpen",
+        Some(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri,
+                language_id,
+                version,
+                text,
+            },
+        }),
+        Notification::TextDocDidOpen,
+    )
+}

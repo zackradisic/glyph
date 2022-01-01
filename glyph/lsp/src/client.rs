@@ -1,15 +1,18 @@
 use anyhow::Result;
 use colored::Colorize;
+use common::Edit;
 use std::{
     collections::HashMap,
     ffi::OsStr,
     io::Write,
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    rc::Rc,
     sync::{
         mpsc::{self, Receiver, Sender},
         Arc, RwLock,
     },
     thread::{self},
+    time::Duration,
 };
 
 use bytes::BytesMut;
@@ -19,7 +22,9 @@ use jsonrpc_core::{
 };
 use lsp_types::{
     ClientCapabilities, Diagnostic, InitializeParams, InitializeResult, InitializedParams,
-    PublishDiagnosticsParams, Url, WorkspaceClientCapabilities,
+    PublishDiagnosticsParams, ServerCapabilities, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextEdit, Url, VersionedTextDocumentIdentifier,
+    WorkspaceClientCapabilities,
 };
 use serde::de::DeserializeOwned;
 
@@ -37,16 +42,43 @@ pub enum Either<L, R> {
 pub struct LspSender {
     // TODO: Get rid of dynamic dispatch
     tx: Sender<Box<dyn Message + Send>>,
+    debounce_tx: Sender<Box<dyn Message + Send>>,
 }
 
 impl LspSender {
-    pub fn wrap(tx: Sender<Box<dyn Message + Send>>) -> Self {
-        Self { tx }
+    fn wrap(tx: Sender<Box<dyn Message + Send>>) -> Self {
+        let (debounce_tx, debounce_rx) = mpsc::channel();
+
+        thread::spawn(move || Self::debounce_loop(debounce_rx));
+
+        Self { tx, debounce_tx }
+    }
+
+    fn debounce_loop(rx: Receiver<Box<dyn Message + Send>>) {
+        for msg in rx {}
     }
 
     pub fn send_message(&self, data: Box<dyn Message + Send>) {
+        #[cfg(debug_assertions)]
+        println!("Sending message: {:?}", data);
         self.tx.send(data).unwrap()
     }
+
+    pub fn send_edit(
+        &self,
+        edit: TextDocumentContentChangeEvent,
+        doc: Arc<RwLock<VersionedTextDocumentIdentifier>>,
+    ) {
+    }
+
+    pub fn send_edit_debounce(
+        &self,
+        edit: TextDocumentContentChangeEvent,
+        doc: Arc<RwLock<VersionedTextDocumentIdentifier>>,
+    ) {
+    }
+
+    pub fn send_message_debounce(&self, data: Box<dyn Message + Send>) {}
 }
 
 #[derive(Debug)]
@@ -77,17 +109,20 @@ impl Default for Diagnostics {
 
 pub struct Client {
     diagnostics: Arc<RwLock<Diagnostics>>,
+    server_capabilities: Rc<ServerCapabilities>,
+
+    // Internal stuff
     tx: LspSender,
-    in_thread_id: u64,
-    out_thread_id: u64,
+    write_thread_id: u64,
+    read_thread_id: u64,
     child: Child,
 }
 
 impl Drop for Client {
     fn drop(&mut self) {
         unsafe {
-            libc::pthread_kill(self.in_thread_id as usize, libc::SIGINT);
-            libc::pthread_kill(self.out_thread_id as usize, libc::SIGINT);
+            libc::pthread_kill(self.write_thread_id as usize, libc::SIGINT);
+            libc::pthread_kill(self.read_thread_id as usize, libc::SIGINT);
         }
         self.child.kill().unwrap()
     }
@@ -115,7 +150,10 @@ impl Client {
         let stdin = cmd.stdin.take().unwrap();
         let stdout = NonBlockingReader::from_fd(cmd.stdout.take().unwrap()).unwrap();
 
+        let server_capabilities = Arc::new(RwLock::new(None));
+
         let inner = Inner {
+            server_capabilities: server_capabilities.clone(),
             diagnostics: diagnostics.clone(),
             request_ids: Arc::new(RwLock::new(HashMap::new())),
             req_id_counter: Default::default(),
@@ -123,28 +161,28 @@ impl Client {
         };
         let inner_clone = inner.clone();
 
-        let in_thread_id = thread::spawn(move || inner_clone.stdin(rx, stdin))
+        let write_thread_id = thread::spawn(move || inner_clone.stdin(rx, stdin))
             .thread()
             .id()
             .as_u64()
             .get();
-        let out_thread_id = thread::spawn(move || inner.stdout(stdout))
+        let read_thread_id = thread::spawn(move || inner.stdout(stdout))
             .thread()
             .id()
             .as_u64()
             .get();
 
-        let s = Self {
+        tx.send_message(msg);
+
+        Self {
+            server_capabilities: Rc::new(Self::wait_for_capabilities(server_capabilities)),
             diagnostics,
+
             tx,
-            in_thread_id,
-            out_thread_id,
+            write_thread_id,
+            read_thread_id,
             child: cmd,
-        };
-
-        s.tx.send_message(msg);
-
-        s
+        }
     }
 
     pub fn send_message(&self, data: Box<dyn Message + Send>) {
@@ -183,6 +221,26 @@ impl Client {
         }
     }
 
+    /// Blocks the current thread until server capabilities are set and returns
+    /// a copy of them
+    fn wait_for_capabilities(
+        capabilities: Arc<RwLock<Option<ServerCapabilities>>>,
+    ) -> ServerCapabilities {
+        loop {
+            println!("Waiting for capabilities...");
+            let capabilities = { capabilities.read().unwrap().clone() };
+            if let Some(capabilities) = capabilities {
+                println!("Got capabilities!");
+                return capabilities;
+            }
+            std::thread::sleep(Duration::from_millis(100))
+        }
+    }
+
+    pub fn capabilities(&self) -> &Rc<ServerCapabilities> {
+        &self.server_capabilities
+    }
+
     pub fn diagnostics(&self) -> &Arc<RwLock<Diagnostics>> {
         &self.diagnostics
     }
@@ -192,8 +250,11 @@ impl Client {
     }
 }
 
+/// This struct is cloned and given to the reader and writer
+/// threads respectively
 #[derive(Clone)]
 struct Inner {
+    server_capabilities: Arc<RwLock<Option<ServerCapabilities>>>,
     diagnostics: Arc<RwLock<Diagnostics>>,
     request_ids: Arc<RwLock<HashMap<u16, Request>>>,
     req_id_counter: Arc<RwLock<u16>>,
@@ -203,6 +264,7 @@ struct Inner {
 // Functions that execute in threads
 impl Inner {
     fn stdin(&self, rx: Receiver<Box<dyn Message + Send>>, mut stdin: ChildStdin) {
+        // Write all messages coming from rx
         for mut msg in rx {
             if let Some(req) = msg.request() {
                 let mut req_ids = self.request_ids.write().unwrap();
@@ -242,10 +304,10 @@ impl Inner {
             match decoder.decode(&mut buf) {
                 Ok(Some(s)) => match LanguageServerDecoder::read_response(&s) {
                     Ok(ServerResponse::Response(res)) => match res {
-                        JsonResponse::Single(output) => self.handle_output(output),
+                        JsonResponse::Single(output) => self.handle_response(output),
                         JsonResponse::Batch(outputs) => outputs
                             .into_iter()
-                            .for_each(|output| self.handle_output(output)),
+                            .for_each(|output| self.handle_response(output)),
                     },
                     Ok(ServerResponse::Notification(JsonNotification {
                         method, params, ..
@@ -263,51 +325,62 @@ impl Inner {
         }
     }
 
-    fn handle_output(&self, output: Output) {
+    fn handle_response(&self, output: Output) {
         match output {
             Output::Success(Success {
                 result,
                 id: jsonrpc_core::Id::Num(id),
                 ..
-            }) => self.handle_success(result, id),
+            }) => {
+                if id > u16::MAX as u64 {
+                    panic!("Invalid id: {}", id);
+                }
+                let req = {
+                    let request_ids = self.request_ids.read().unwrap();
+                    request_ids.get(&(id as u16)).cloned()
+                };
+                if let Some(req) = req {
+                    self.handle_successful_response(result, req)
+                } else {
+                    eprintln!("Request response with id ({}) has no mapping", id);
+                }
+            }
             Output::Failure(Failure { id, error, .. }) => {
                 eprintln!("Error: {:?} {:?}", id, error)
             }
             _ => eprintln!("Invalid output: {:?}", output),
         }
     }
-
-    fn handle_success(&self, result: serde_json::Value, id: u64) {
-        if id > u16::MAX as u64 {
-            panic!("Invalid id: {}", id);
-        }
-        let req = {
-            let request_ids = self.request_ids.read().unwrap();
-            request_ids.get(&(id as u16)).cloned()
-        };
-        if let Some(req) = req {
-            self.handle_request_response(result, req)
-        } else {
-            eprintln!("Request response with id ({}) has no mapping", id);
-        }
-    }
 }
 
-// Request responses
+// Request response handlers
 impl Inner {
-    fn handle_request_response(&self, result: serde_json::Value, request: Request) {
+    fn handle_successful_response(&self, result: serde_json::Value, request: Request) {
         match request {
             Request::Initialize => self.initialized(serde_json::from_value(result).unwrap()),
             Request::TextDocDefinition => todo!(),
         }
     }
 
-    fn initialized(&self, _result: InitializeResult) {
+    fn initialized(&self, result: InitializeResult) {
+        // TODO: Capture name and show it on the status line
+        let _ = result
+            .server_info
+            .map(|info| info.name)
+            .unwrap_or_else(|| "Rust".into());
+
+        {
+            let mut server_capabilities = self.server_capabilities.write().unwrap();
+            let _ = server_capabilities.insert(result.capabilities);
+        }
+
+        // Respond with acknowledgement
         let msg = Box::new(NotifMessage::new(
             "initialized",
             Some(InitializedParams {}),
             Notification::Initialized,
         ));
+
         self.tx.send_message(msg);
     }
 }
@@ -329,8 +402,6 @@ impl Inner {
 
         let mut diagnostics = self.diagnostics.write().unwrap();
         diagnostics.update(params.diagnostics);
-
-        println!("DIAGNOSTICS: {:?}", diagnostics.diagnostics);
 
         Ok(())
     }

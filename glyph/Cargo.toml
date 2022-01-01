@@ -3,7 +3,8 @@ members = [
 	"editor",
 	"macros",
 	"syntax",
-	"lsp"
+	"lsp",
+	"common"
 ]
 
 [patch.crates-io]

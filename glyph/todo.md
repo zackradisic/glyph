@@ -15,6 +15,8 @@
     * Tab/status line
     * Git diff & hunk viewer
 
+# Revamping edits
+4 variants: InsertSingle, DeleteSingle, Insert, Delete
 
 # Future niceties 
 

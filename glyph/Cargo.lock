@@ -83,6 +83,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "common"
+version = "0.1.0"
+
+[[package]]
 name = "form_urlencoded"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -227,6 +231,7 @@ dependencies = [
 name = "glyph"
 version = "0.1.0"
 dependencies = [
+ "common",
  "freetype-rs",
  "gl",
  "lsp",
@@ -312,6 +317,7 @@ dependencies = [
  "bytes",
  "colored",
  "combine",
+ "common",
  "jsonrpc-core",
  "libc",
  "lsp-types",

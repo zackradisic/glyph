@@ -1,7 +1,15 @@
-use lsp::{Client, LspSender};
+use common::Edit;
+use lsp::{Client, LspSender, ServerCapabilities, Url, VersionedTextDocumentIdentifier};
 use ropey::{Rope, RopeSlice};
 use sdl2::{event::Event, keyboard::Keycode};
-use std::{cell::Cell, cmp::Ordering, ops::Range};
+use std::{
+    cell::Cell,
+    cmp::Ordering,
+    hint::unreachable_unchecked,
+    ops::Range,
+    rc::Rc,
+    sync::{Arc, RwLock},
+};
 
 use crate::{
     vim::{Cmd, NewLine},
@@ -14,33 +22,6 @@ pub enum Mode {
     Insert,
     Normal,
     Visual,
-}
-
-#[derive(Clone, Debug)]
-pub enum Edit {
-    Insertion { start: Cell<u32>, str_idx: u32 },
-    Deletion { start: Cell<u32>, str_idx: u32 },
-}
-
-impl Edit {
-    pub fn invert(&self) -> Self {
-        match self {
-            Edit::Insertion {
-                start,
-                str_idx: str,
-            } => Edit::Deletion {
-                start: start.clone(),
-                str_idx: *str,
-            },
-            Edit::Deletion {
-                start,
-                str_idx: str,
-            } => Edit::Insertion {
-                start: start.clone(),
-                str_idx: *str,
-            },
-        }
-    }
 }
 
 pub struct Editor {
@@ -68,7 +49,10 @@ pub struct Editor {
     /// it bloats the enum's size: 1 byte -> 16 bytes!!!
     multiple_events_data: [EditorEvent; 3],
 
+    // LSP
     lsp_sender: Option<LspSender>,
+    server_capabilities: Option<Rc<ServerCapabilities>>,
+    text_doc_id: Option<Arc<RwLock<VersionedTextDocumentIdentifier>>>,
 }
 
 fn text_to_lines<I>(text: I) -> Vec<u32>
@@ -110,14 +94,19 @@ impl Editor {
             line: 0,
             text,
             mode: Mode::Insert,
+
             vim: Vim::new(),
             selection: None,
             had_space: false,
             edits: Vec::new(),
             redos: Vec::new(),
             edit_vecs: Vec::new(),
+
             multiple_events_data: [EditorEvent::Nothing; 3],
+
             lsp_sender: None,
+            server_capabilities: None,
+            text_doc_id: None,
         }
     }
 
@@ -126,7 +115,21 @@ impl Editor {
     }
 
     pub fn configure_lsp(&mut self, lsp_client: &Client) {
-        self.lsp_sender = Some(lsp_client.sender().clone())
+        let sender = lsp_client.sender().clone();
+        let text_doc_id = VersionedTextDocumentIdentifier {
+            uri: Url::parse("file:///Users/zackradisic/Desktop/Code/lsp-test-workspace/src/lib.rs")
+                .unwrap(),
+            version: 0,
+        };
+        sender.send_message(Box::new(lsp::text_doc_did_open(
+            text_doc_id.uri.clone(),
+            "rust".into(),
+            text_doc_id.version,
+            self.text_all().to_string(),
+        )));
+        self.server_capabilities = Some(lsp_client.capabilities().clone());
+        self.lsp_sender = Some(sender);
+        self.text_doc_id = Some(Arc::new(RwLock::new(text_doc_id)))
     }
 
     pub fn event(&mut self, event: Event) -> EditorEvent {
@@ -477,36 +480,10 @@ impl Editor {
         self.lines[self.line] += text.len() as u32;
 
         let char = text.chars().next().unwrap();
-        match self.edits.last_mut() {
-            _ if self.had_space => {
-                let vec = vec![char];
-                self.edit_vecs.push(vec);
-                let idx = self.edit_vecs.len() - 1;
-                self.edits.push(Edit::Insertion {
-                    start: Cell::new(pos as u32),
-                    str_idx: idx as u32,
-                });
-                self.had_space = false;
-            }
-            Some(Edit::Insertion { str_idx: str, .. }) => {
-                let is_space = text == " ";
-                self.edit_vecs[*str as usize].push(char);
-                if is_space {
-                    self.had_space = true;
-                }
-            }
-            None | Some(Edit::Deletion { .. }) => {
-                self.edit_vecs.push(vec![char]);
-                self.edits.push(Edit::Insertion {
-                    start: Cell::new(pos as u32),
-                    str_idx: self.edit_vecs.len() as u32 - 1,
-                })
-            }
-        }
-        // Invalidate redo stack if we make an edit
-        if !self.redos.is_empty() {
-            self.redos.clear()
-        }
+        self.add_edit(Edit::InsertSingle {
+            c: char,
+            idx: pos as u32,
+        });
     }
 
     fn backspace(&mut self) -> EditorEvent {
@@ -535,22 +512,10 @@ impl Editor {
             0
         };
         if let Some(c) = removed {
-            match self.edits.last_mut() {
-                Some(Edit::Deletion { start, str_idx }) => {
-                    let val = start.get();
-                    if val > 0 {
-                        start.set(val - 1)
-                    }
-                    self.edit_vecs[*str_idx as usize].push(c);
-                }
-                None | Some(Edit::Insertion { .. }) => {
-                    self.edit_vecs.push(vec![c]);
-                    self.edits.push(Edit::Deletion {
-                        start: Cell::new(pos as u32 - 1),
-                        str_idx: self.edit_vecs.len() as u32 - 1,
-                    });
-                }
-            }
+            self.add_edit(Edit::DeleteSingle {
+                c,
+                idx: pos as u32 - 1,
+            });
         }
         EditorEvent::DrawText
     }
@@ -577,11 +542,19 @@ impl Editor {
         };
 
         if start == end {
+            let text: Vec<char> = self.text.slice(range.start..range.end).chars().collect();
+            let start = range.start;
             self.text.remove(range);
             self.lines[start] = self.line_count(start) as u32;
+            self.edit_vecs.push(text);
+            self.add_edit(Edit::Delete {
+                start: Cell::new(start as u32),
+                str_idx: self.edit_vecs.len() as u32 - 1,
+            });
         } else if matches!(self.mode, Mode::Normal) {
             let start = self.text.line_to_char(start);
             let end = self.text.line_to_char(end) + self.text.line(end).len_chars();
+            let text: Vec<char> = self.text.slice(start..end).chars().collect();
 
             self.text.remove(start..end);
 
@@ -595,10 +568,23 @@ impl Editor {
                     i -= 1;
                 }
             }
+
+            self.edit_vecs.push(text);
+            self.add_edit(Edit::Delete {
+                start: Cell::new(start as u32),
+                str_idx: self.edit_vecs.len() as u32 - 1,
+            })
         } else {
             let line_pos = self.text.char_to_line(start);
+            let text: Vec<char> = self.text.slice(start..end).chars().collect();
 
             self.text.remove(start..end);
+
+            self.edit_vecs.push(text);
+            self.add_edit(Edit::Delete {
+                start: Cell::new(start as u32),
+                str_idx: self.edit_vecs.len() as u32 - 1,
+            });
 
             // TODO: Be smarter about this and only compute the lines affected
             self.lines = text_to_lines(self.text.chars());
@@ -1013,13 +999,157 @@ impl Editor {
     }
 }
 
-// This impl contains undo/redo utility functions
+// This impl contains functions related to edits/undos/redos
 impl Editor {
+    fn lsp_edit_text(&self, edit: &Edit) -> String {
+        match edit {
+            // Inserts just contain the added text
+            Edit::InsertSingle { c, .. } => c.to_string(),
+            Edit::Insert { str_idx, .. } => self.edit_vecs[*str_idx as usize].iter().collect(),
+            // Deletes are empty
+            Edit::DeleteSingle { .. } => "".into(),
+            Edit::Delete { .. } => "".into(),
+        }
+    }
+
+    fn cur_pos_to_lsp_pos(&self, pos: usize) -> lsp::Position {
+        let line = self.text.char_to_line(pos);
+        let character = pos - self.text.line_to_char(line);
+        lsp::Position {
+            line: line as u32,
+            character: character as u32,
+        }
+    }
+
+    fn to_lsp_edit(&self, edit: &Edit) -> lsp::TextEdit {
+        let range = edit.range(&self.edit_vecs);
+        lsp::TextEdit {
+            range: Some(lsp::Range {
+                start: self.cur_pos_to_lsp_pos(range.start as usize),
+                end: self.cur_pos_to_lsp_pos(range.end as usize),
+            }),
+            range_length: None,
+            text: self.lsp_edit_text(edit),
+        }
+    }
+
+    fn add_edit(&mut self, edit: Edit) {
+        let mut debounce = true;
+        match edit {
+            Edit::InsertSingle { c, idx } => self.add_edit_insert_single(c, idx),
+            Edit::DeleteSingle { c, idx } => self.add_edit_delete_single(c, idx),
+            other => {
+                self.edits.push(other);
+                debounce = true;
+            }
+        }
+        // Making an edit invalidates the redo stack
+        if !self.redos.is_empty() {
+            self.redos.clear()
+        }
+        // Send to LSP
+        if let Some(sender) = &self.lsp_sender {
+            let text_doc_id = self.text_doc_id.as_ref().unwrap();
+            if debounce {
+                // Don't increment version here, let the LspSender do it when it
+                // finally dispatches edit to server
+                sender.send_edit_debounce(
+                    self.edits.last().map(|e| self.to_lsp_edit(e)).unwrap(),
+                    text_doc_id.clone(),
+                );
+            } else {
+                text_doc_id.write().unwrap().version += 1;
+                sender.send_edit(
+                    self.edits.last().map(|e| self.to_lsp_edit(e)).unwrap(),
+                    text_doc_id.clone(),
+                );
+            }
+        }
+    }
+
+    #[inline]
+    fn add_edit_delete_single(&mut self, c: char, idx: u32) {
+        match self.edits.last_mut() {
+            Some(Edit::Delete { start, str_idx }) => {
+                let val = start.get();
+                if val > 0 {
+                    start.set(val - 1)
+                }
+                self.edit_vecs[*str_idx as usize].push(c);
+            }
+            None | Some(Edit::Insert { .. }) | Some(Edit::InsertSingle { .. }) => {
+                self.edit_vecs.push(vec![c]);
+                self.edits.push(Edit::Delete {
+                    start: Cell::new(idx as u32 - 1),
+                    str_idx: self.edit_vecs.len() as u32 - 1,
+                });
+            }
+            Some(e) => match e {
+                Edit::DeleteSingle { c: c2, idx: idx2 } => {
+                    self.edit_vecs.push(vec![c, *c2]);
+                    *e = Edit::Delete {
+                        start: Cell::new(*idx2),
+                        str_idx: self.edit_vecs.len() as u32 - 1,
+                    }
+                }
+                // We won't ever reach these
+                Edit::InsertSingle { .. } => unsafe { unreachable_unchecked() },
+                Edit::Insert { .. } => unsafe { unreachable_unchecked() },
+                Edit::Delete { .. } => unsafe { unreachable_unchecked() },
+            },
+        }
+    }
+
+    #[inline]
+    fn add_edit_insert_single(&mut self, c: char, idx: u32) {
+        match self.edits.last_mut() {
+            _ if self.had_space => {
+                let vec = vec![c];
+                self.edit_vecs.push(vec);
+                let idx = self.edit_vecs.len() - 1;
+                self.edits.push(Edit::Insert {
+                    start: Cell::new(idx as u32),
+                    str_idx: idx as u32,
+                });
+                self.had_space = false;
+            }
+            Some(Edit::Insert { str_idx: str, .. }) => {
+                let is_space = c == ' ';
+                self.edit_vecs[*str as usize].push(c);
+                if is_space {
+                    self.had_space = true;
+                }
+            }
+            None | Some(Edit::Delete { .. }) | Some(Edit::DeleteSingle { .. }) => {
+                self.edit_vecs.push(vec![c]);
+                self.edits.push(Edit::Insert {
+                    start: Cell::new(idx),
+                    str_idx: self.edit_vecs.len() as u32 - 1,
+                })
+            }
+            Some(e) => match e {
+                Edit::InsertSingle { c: c2, idx: idx2 } => {
+                    self.edit_vecs.push(vec![c, *c2]);
+                    *e = Edit::Insert {
+                        start: Cell::new(*idx2),
+                        str_idx: self.edit_vecs.len() as u32 - 1,
+                    }
+                }
+                // We handle these above
+                Edit::Insert { .. } => unsafe { unreachable_unchecked() },
+                Edit::Delete { .. } => unsafe { unreachable_unchecked() },
+                Edit::DeleteSingle { .. } => unsafe { unreachable_unchecked() },
+            },
+        }
+    }
+
     #[inline]
     fn undo(&mut self) {
         if let Some(edit) = self.edits.pop() {
+            println!("ORIGINAL: {:?}", edit);
             let inversion = edit.invert();
             self.redos.push(edit);
+            println!("INVERSION: {:?}", inversion);
             self.apply_edit(inversion)
         }
     }
@@ -1035,12 +1165,14 @@ impl Editor {
     #[inline]
     fn apply_edit(&mut self, edit: Edit) {
         match edit {
-            Edit::Deletion { start, str_idx } => {
+            Edit::InsertSingle { c, idx } => self.text.insert_char(idx as usize, c),
+            Edit::DeleteSingle { c, idx } => self.text.remove((idx as usize)..(idx as usize + 1)),
+            Edit::Delete { start, str_idx } => {
                 let len = self.edit_vecs[str_idx as usize].len();
                 let start = start.get() as usize;
                 self.text.remove(start..(start + len));
             }
-            Edit::Insertion { start, str_idx } => {
+            Edit::Insert { start, str_idx } => {
                 let str = self.edit_vecs[str_idx as usize].iter().collect::<String>();
                 self.text.insert(start.get() as usize, &str);
             }
