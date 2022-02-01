@@ -480,6 +480,7 @@ impl Editor {
         self.lines[self.line] += text.len() as u32;
 
         let char = text.chars().next().unwrap();
+        println!("Insert Pos: {}", pos);
         self.add_edit(Edit::InsertSingle {
             c: char,
             idx: pos as u32,
@@ -1106,10 +1107,10 @@ impl Editor {
             _ if self.had_space => {
                 let vec = vec![c];
                 self.edit_vecs.push(vec);
-                let idx = self.edit_vecs.len() - 1;
+                let str_idx = self.edit_vecs.len() - 1;
                 self.edits.push(Edit::Insert {
                     start: Cell::new(idx as u32),
-                    str_idx: idx as u32,
+                    str_idx: str_idx as u32,
                 });
                 self.had_space = false;
             }
@@ -1146,7 +1147,7 @@ impl Editor {
     #[inline]
     fn undo(&mut self) {
         if let Some(edit) = self.edits.pop() {
-            println!("ORIGINAL: {:?}", edit);
+            println!("ORIGINAL: {:?} EDIT_VEC: {:?}", edit, self.edit_vecs);
             let inversion = edit.invert();
             self.redos.push(edit);
             println!("INVERSION: {:?}", inversion);
@@ -1170,6 +1171,7 @@ impl Editor {
             Edit::Delete { start, str_idx } => {
                 let len = self.edit_vecs[str_idx as usize].len();
                 let start = start.get() as usize;
+                println!("Start: {} End: {} Len: {}", start, start + len, len);
                 self.text.remove(start..(start + len));
             }
             Edit::Insert { start, str_idx } => {
