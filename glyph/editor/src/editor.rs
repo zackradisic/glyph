@@ -544,21 +544,22 @@ impl Editor {
 
         if start == end {
             let text: Vec<char> = self.text.slice(range.start..range.end).chars().collect();
-            let start = range.start;
+            let start_char = range.start;
             self.text.remove(range);
             self.lines[start] = self.line_count(start) as u32;
             self.edit_vecs.push(text);
             self.add_edit(Edit::Delete {
-                start: Cell::new(start as u32),
+                start: Cell::new(start_char as u32),
                 str_idx: self.edit_vecs.len() as u32 - 1,
             });
         } else if matches!(self.mode, Mode::Normal) {
-            let start = self.text.line_to_char(start);
-            let end = self.text.line_to_char(end) + self.text.line(end).len_chars();
-            let text: Vec<char> = self.text.slice(start..end).chars().collect();
+            let start_char = self.text.line_to_char(start);
+            let end_char = self.text.line_to_char(end) + self.text.line(end).len_chars();
+            let text: Vec<char> = self.text.slice(start_char..end_char).chars().collect();
 
-            self.text.remove(start..end);
+            self.text.remove(start_char..end_char);
 
+            // Remove all lines we cut
             let mut i = start;
             for _ in start..(end + 1) {
                 if self.lines.is_empty() {
@@ -572,7 +573,7 @@ impl Editor {
 
             self.edit_vecs.push(text);
             self.add_edit(Edit::Delete {
-                start: Cell::new(start as u32),
+                start: Cell::new(start_char as u32),
                 str_idx: self.edit_vecs.len() as u32 - 1,
             })
         } else {
@@ -1147,10 +1148,8 @@ impl Editor {
     #[inline]
     fn undo(&mut self) {
         if let Some(edit) = self.edits.pop() {
-            println!("ORIGINAL: {:?} EDIT_VEC: {:?}", edit, self.edit_vecs);
             let inversion = edit.invert();
             self.redos.push(edit);
-            println!("INVERSION: {:?}", inversion);
             self.apply_edit(inversion)
         }
     }
@@ -1171,7 +1170,6 @@ impl Editor {
             Edit::Delete { start, str_idx } => {
                 let len = self.edit_vecs[str_idx as usize].len();
                 let start = start.get() as usize;
-                println!("Start: {} End: {} Len: {}", start, start + len, len);
                 self.text.remove(start..(start + len));
             }
             Edit::Insert { start, str_idx } => {
@@ -1464,9 +1462,8 @@ mod tests {
                 let end = editor.pos();
                 editor.enter();
                 editor.insert("1");
-                editor.up(1);
-                editor.cursor = 0;
 
+                editor.switch_mode(Mode::Normal); // only allowed from normal -> visual
                 editor.delete_range(start..end);
                 assert_eq!(editor.text_str().unwrap(), "1\n1\n1");
                 assert_eq!(editor.lines, vec![1, 1, 1]);
@@ -1487,6 +1484,7 @@ mod tests {
                 editor.up(1);
                 editor.cursor = 0;
 
+                editor.switch_mode(Mode::Normal); // only allowed from normal -> visual
                 editor.delete_range(start..end);
                 assert_eq!(editor.text_str().unwrap(), "1\n\n1");
                 assert_eq!(editor.lines, vec![1, 0, 1]);
@@ -1507,6 +1505,7 @@ mod tests {
                 editor.down(1);
                 let end = editor.pos();
 
+                editor.switch_mode(Mode::Normal); // only allowed from normal -> visual
                 editor.delete_range(start..end);
                 assert_eq!(editor.text_str().unwrap(), "1\n");
                 assert_eq!(editor.lines, vec![1]);
@@ -1534,6 +1533,7 @@ mod tests {
                 editor.line = editor.lines.len() - 1;
                 let end = editor.pos();
 
+                editor.switch_mode(Mode::Normal); // only allowed from normal -> visual
                 editor.delete_range(start..end);
                 assert_eq!(editor.text_str().unwrap(), "");
                 assert_eq!(editor.lines, Vec::<u32>::new());
@@ -1608,6 +1608,7 @@ mod tests {
             editor.insert("1");
             editor.insert("2");
             editor.insert("3");
+            //123
             editor.cursor = 2;
 
             editor.enter();

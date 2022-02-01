@@ -448,14 +448,19 @@ mod tests {
         #[test]
         fn basic_ops() {
             let mut vim = Vim::new();
-            let basic = vec![Keycode::H, Keycode::J, Keycode::K, Keycode::L];
+            let basic = vec![
+                text_input("h"),
+                text_input("j"),
+                text_input("k"),
+                text_input("l"),
+            ];
             let basic_moves = vec![Move::Left, Move::Down, Move::Up, Move::Right];
             let basic_input = vec!["d", "c", "y"];
 
             for (i, input) in basic_input.into_iter().enumerate() {
                 assert_eq!(vim.event(text_input(input)), None);
                 assert_eq!(
-                    vim.event(keydown(basic[i])),
+                    vim.event(basic[i].clone()),
                     Some(match input {
                         "d" => Cmd::Delete(Some(basic_moves[i].clone())),
                         "c" => Cmd::Change(Some(basic_moves[i].clone())),
@@ -471,7 +476,7 @@ mod tests {
         fn repeated_ops() {
             let mut vim = Vim::new();
             let counts = vec![3, 4, 2];
-            let basic = vec![Keycode::H, Keycode::J, Keycode::K, Keycode::L];
+            let basic = vec!["h", "j", "k", "l"];
             let basic_moves = vec![Move::Left, Move::Down, Move::Up, Move::Right];
             let basic_input = vec!["d", "c", "y"];
 
@@ -487,7 +492,7 @@ mod tests {
                         _ => unreachable!(),
                     }),
                 };
-                assert_eq!(vim.event(keydown(basic[i])), Some(repeated));
+                assert_eq!(vim.event(text_input(basic[i])), Some(repeated));
                 is_reset(&mut vim);
             }
         }
@@ -519,13 +524,13 @@ mod tests {
         #[test]
         fn basic_movement() {
             let mut vim = Vim::new();
-            assert_eq!(vim.event(keydown(Keycode::H)), Some(Cmd::Move(Move::Left)));
+            assert_eq!(vim.event(text_input("h")), Some(Cmd::Move(Move::Left)));
             is_reset(&mut vim);
-            assert_eq!(vim.event(keydown(Keycode::K)), Some(Cmd::Move(Move::Up)));
+            assert_eq!(vim.event(text_input("k")), Some(Cmd::Move(Move::Up)));
             is_reset(&mut vim);
-            assert_eq!(vim.event(keydown(Keycode::J)), Some(Cmd::Move(Move::Down)));
+            assert_eq!(vim.event(text_input("j")), Some(Cmd::Move(Move::Down)));
             is_reset(&mut vim);
-            assert_eq!(vim.event(keydown(Keycode::L)), Some(Cmd::Move(Move::Right)));
+            assert_eq!(vim.event(text_input("l")), Some(Cmd::Move(Move::Right)));
             is_reset(&mut vim);
 
             assert_eq!(vim.event(text_input("0")), Some(Cmd::Move(Move::LineStart)));
@@ -548,7 +553,7 @@ mod tests {
             let mut vim = Vim::new();
             assert_eq!(vim.event(text_input("2")), None);
             assert_eq!(
-                vim.event(keydown(Keycode::K)),
+                vim.event(text_input("k")),
                 Some(Cmd::Repeat {
                     count: 2,
                     cmd: Box::new(Cmd::Move(Move::Up))
