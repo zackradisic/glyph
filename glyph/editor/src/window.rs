@@ -529,7 +529,7 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                 let mut col = 0;
                 for diag in &d.diagnostics {
                     let max_w = self.atlas.max_w * SX;
-                    let max_h = self.atlas.max_h;
+                    let max_h = self.atlas.max_h * SY;
 
                     let mut x = START_X;
                     let mut y = START_Y;
@@ -542,6 +542,7 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                         end: end_pos,
                     } = diag.range;
                     let start = self.editor.line_idx(start_pos.line as usize);
+
                     let end = self
                         .editor
                         .line_char_idx(end_pos.line as usize, end_pos.character as usize);
@@ -549,6 +550,8 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                     let within_range = |i: usize| -> bool {
                         (i + start) >= (start + start_pos.character as usize) && (i + start) < end
                     };
+
+                    y -= max_h * (start_pos.line as f32);
 
                     for (i, ch) in self.editor.text(start..(end + 1)).chars().enumerate() {
                         let c = ch as usize;
@@ -649,7 +652,6 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                             colors.push(ERROR_RED);
                             break;
                         } else if i + start >= end {
-                            println!("BREKING");
                             if !top_left.is_null() {
                                 let bot_right = Point3 {
                                     x: x2,

@@ -1080,7 +1080,7 @@ impl Editor {
             None | Some(Edit::Insert { .. }) | Some(Edit::InsertSingle { .. }) => {
                 self.edit_vecs.push(vec![c]);
                 self.edits.push(Edit::Delete {
-                    start: Cell::new(idx as u32 - 1),
+                    start: Cell::new((idx as u32).saturating_sub(1)),
                     str_idx: self.edit_vecs.len() as u32 - 1,
                 });
             }
@@ -1366,6 +1366,7 @@ impl Editor {
         self.multiple_events_data = evts;
     }
 
+    /// Return the char index of the given line
     #[inline]
     pub fn line_idx(&self, line: usize) -> usize {
         self.text.line_to_char(line)
