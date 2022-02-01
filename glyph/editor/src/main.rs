@@ -56,12 +56,13 @@ fn main() {
         gl::Clear(gl::COLOR_BUFFER_BIT);
     }
 
-    let lsp_client = Client::new(
-        "/usr/local/bin/rust-analyzer",
-        "/Users/zackradisic/Desktop/Code/lsp-test-workspace",
-    );
+    // let lsp_client = Client::new(
+    //     "/usr/local/bin/rust-analyzer",
+    //     "/Users/zackradisic/Desktop/Code/lsp-test-workspace",
+    // );
+    // let mut editor_window = Window::new(initial_text, &GITHUB, Some(&lsp_client));
+    let mut editor_window = Window::new(initial_text, &GITHUB, None);
 
-    let mut editor_window = Window::new(initial_text, &GITHUB, &lsp_client);
     editor_window.render_text();
     window.gl_swap_window();
 

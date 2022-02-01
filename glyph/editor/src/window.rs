@@ -96,8 +96,8 @@ pub struct Window<'theme, 'highlight> {
     cursor_changed: bool,
 
     // LSP
-    diagnostics: Arc<RwLock<Diagnostics>>,
-    lsp_send: LspSender,
+    diagnostics: Option<Arc<RwLock<Diagnostics>>>,
+    lsp_send: Option<LspSender>,
     last_clock: u64,
 }
 
@@ -105,7 +105,7 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
     pub fn new(
         initial_text: Option<String>,
         theme: &'theme ThemeType,
-        lsp_client: &Client,
+        lsp_client: Option<&Client>,
     ) -> Self {
         let font_path = "./fonts/FiraCode.ttf";
 
@@ -118,7 +118,9 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
         let highlighter = Highlighter::new();
 
         let mut editor = Editor::with_text(initial_text);
-        editor.configure_lsp(lsp_client);
+        if let Some(lsp_client) = lsp_client {
+            editor.configure_lsp(lsp_client);
+        }
 
         Self {
             atlas,
@@ -145,8 +147,8 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
             text_changed: false,
             cursor_changed: false,
 
-            diagnostics: lsp_client.diagnostics().clone(),
-            lsp_send: lsp_client.sender().clone(),
+            diagnostics: lsp_client.map(|c| c.diagnostics().clone()),
+            lsp_send: lsp_client.map(|c| c.sender().clone()),
             last_clock: 0,
         }
     }
@@ -518,136 +520,109 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
     }
 
     pub fn queue_diagnostics(&mut self) {
-        let d = self.diagnostics.read().unwrap();
-        if self.last_clock != d.clock {
-            let mut coords: Vec<Point3> = Vec::new();
-            let mut colors: Vec<Color> = Vec::new();
+        if let Some(diagnostics) = &self.diagnostics {
+            let d = diagnostics.read().unwrap();
+            if self.last_clock != d.clock {
+                let mut coords: Vec<Point3> = Vec::new();
+                let mut colors: Vec<Color> = Vec::new();
 
-            let mut col = 0;
-            for diag in &d.diagnostics {
-                let max_w = self.atlas.max_w * SX;
-                let max_h = self.atlas.max_h;
+                let mut col = 0;
+                for diag in &d.diagnostics {
+                    let max_w = self.atlas.max_w * SX;
+                    let max_h = self.atlas.max_h;
 
-                let mut x = START_X;
-                let mut y = START_Y;
+                    let mut x = START_X;
+                    let mut y = START_Y;
 
-                let mut top_left: Point3 = Point3::null();
-                let mut bot_left: Point3 = Point3::null();
+                    let mut top_left: Point3 = Point3::null();
+                    let mut bot_left: Point3 = Point3::null();
 
-                let lsp::Range {
-                    start: start_pos,
-                    end: end_pos,
-                } = diag.range;
-                let start = self.editor.line_idx(start_pos.line as usize);
-                let end = self
-                    .editor
-                    .line_char_idx(end_pos.line as usize, end_pos.character as usize);
+                    let lsp::Range {
+                        start: start_pos,
+                        end: end_pos,
+                    } = diag.range;
+                    let start = self.editor.line_idx(start_pos.line as usize);
+                    let end = self
+                        .editor
+                        .line_char_idx(end_pos.line as usize, end_pos.character as usize);
 
-                let within_range = |i: usize| -> bool {
-                    (i + start) >= (start + start_pos.character as usize) && (i + start) < end
-                };
+                    let within_range = |i: usize| -> bool {
+                        (i + start) >= (start + start_pos.character as usize) && (i + start) < end
+                    };
 
-                for (i, ch) in self.editor.text(start..(end + 1)).chars().enumerate() {
-                    let c = ch as usize;
+                    for (i, ch) in self.editor.text(start..(end + 1)).chars().enumerate() {
+                        let c = ch as usize;
 
-                    // Calculate the vertex and texture coordinates
-                    let x2 = x + (col as f32 * max_w);
-                    // let x2 = x + max_w;
-                    let y2 = -y;
-                    let width = self.atlas.glyphs[c].bitmap_w * SX;
-                    let height = self.atlas.glyphs[c].bitmap_h * SY;
+                        // Calculate the vertex and texture coordinates
+                        let x2 = x + (col as f32 * max_w);
+                        // let x2 = x + max_w;
+                        let y2 = -y;
+                        let width = self.atlas.glyphs[c].bitmap_w * SX;
+                        let height = self.atlas.glyphs[c].bitmap_h * SY;
 
-                    // Skip glyphs that have no pixels
-                    if (width == 0.0 || height == 0.0) && !within_range(i) {
-                        match ch as u8 {
-                            32 => {
-                                col += 1;
-                            }
-                            // Tab
-                            9 => {
-                                x += self.atlas.max_w * SY * 4f32;
-                                col += 4;
-                            }
-                            // New line
-                            10 => {
-                                y -= max_h;
-                                x = START_X;
-                                if !top_left.is_null() {
-                                    let bot_right = Point3 {
-                                        x: x2,
-                                        y: -y2 + max_h,
-                                        z: 0.0,
-                                    };
-                                    let top_right = Point3 {
-                                        x: x2,
-                                        y: -y2,
-                                        z: 0.0,
-                                    };
-                                    // First triangle
-                                    coords.push(top_left.clone());
-                                    coords.push(bot_left.clone());
-                                    coords.push(bot_right.clone());
-                                    // Second triangle
-                                    coords.push(top_left.clone());
-                                    coords.push(top_right);
-                                    coords.push(bot_right);
-                                    colors.push(ERROR_RED);
-                                    colors.push(ERROR_RED);
-                                    colors.push(ERROR_RED);
-                                    colors.push(ERROR_RED);
-                                    colors.push(ERROR_RED);
-                                    colors.push(ERROR_RED);
-
-                                    top_left = Point3::null();
-                                    bot_left = Point3::null();
+                        // Skip glyphs that have no pixels
+                        if (width == 0.0 || height == 0.0) && !within_range(i) {
+                            match ch as u8 {
+                                32 => {
+                                    col += 1;
                                 }
-                                col = 0;
-                            }
-                            _ => {}
-                        }
-                        continue;
-                    }
+                                // Tab
+                                9 => {
+                                    x += self.atlas.max_w * SY * 4f32;
+                                    col += 4;
+                                }
+                                // New line
+                                10 => {
+                                    y -= max_h;
+                                    x = START_X;
+                                    if !top_left.is_null() {
+                                        let bot_right = Point3 {
+                                            x: x2,
+                                            y: -y2 + max_h,
+                                            z: 0.0,
+                                        };
+                                        let top_right = Point3 {
+                                            x: x2,
+                                            y: -y2,
+                                            z: 0.0,
+                                        };
+                                        // First triangle
+                                        coords.push(top_left.clone());
+                                        coords.push(bot_left.clone());
+                                        coords.push(bot_right.clone());
+                                        // Second triangle
+                                        coords.push(top_left.clone());
+                                        coords.push(top_right);
+                                        coords.push(bot_right);
+                                        colors.push(ERROR_RED);
+                                        colors.push(ERROR_RED);
+                                        colors.push(ERROR_RED);
+                                        colors.push(ERROR_RED);
+                                        colors.push(ERROR_RED);
+                                        colors.push(ERROR_RED);
 
-                    if top_left.is_null() && within_range(i) {
-                        top_left = Point3 {
-                            x: x2,
-                            y: -y2,
-                            z: 0.0,
-                        };
-                        bot_left = Point3 {
-                            x: x2,
-                            y: -y2 + max_h,
-                            z: 0.0,
-                        };
-                    } else if !top_left.is_null() && !within_range(i) {
-                        let bot_right = Point3 {
-                            x: x2,
-                            y: -y2 + max_h,
-                            z: 0.0,
-                        };
-                        let top_right = Point3 {
-                            x: x2,
-                            y: -y2,
-                            z: 0.0,
-                        };
-                        // First triangle
-                        coords.push(top_left.clone());
-                        coords.push(bot_left.clone());
-                        coords.push(bot_right.clone());
-                        // Second triangle
-                        coords.push(top_left.clone());
-                        coords.push(top_right);
-                        coords.push(bot_right);
-                        colors.push(ERROR_RED);
-                        colors.push(ERROR_RED);
-                        colors.push(ERROR_RED);
-                        colors.push(ERROR_RED);
-                        colors.push(ERROR_RED);
-                        colors.push(ERROR_RED);
-                        break;
-                    } else if i + start >= end {
-                        println!("BREKING");
-                        if !top_left.is_null() {
+                                        top_left = Point3::null();
+                                        bot_left = Point3::null();
+                                    }
+                                    col = 0;
+                                }
+                                _ => {}
+                            }
+                            continue;
+                        }
+
+                        if top_left.is_null() && within_range(i) {
+                            top_left = Point3 {
+                                x: x2,
+                                y: -y2,
+                                z: 0.0,
+                            };
+                            bot_left = Point3 {
+                                x: x2,
+                                y: -y2 + max_h,
+                                z: 0.0,
+                            };
+                        } else if !top_left.is_null() && !within_range(i) {
                             let bot_right = Point3 {
                                 x: x2,
                                 y: -y2 + max_h,
@@ -672,16 +647,45 @@ impl<'theme, 'highlight> Window<'theme, 'highlight> {
                             colors.push(ERROR_RED);
                             colors.push(ERROR_RED);
                             colors.push(ERROR_RED);
+                            break;
+                        } else if i + start >= end {
+                            println!("BREKING");
+                            if !top_left.is_null() {
+                                let bot_right = Point3 {
+                                    x: x2,
+                                    y: -y2 + max_h,
+                                    z: 0.0,
+                                };
+                                let top_right = Point3 {
+                                    x: x2,
+                                    y: -y2,
+                                    z: 0.0,
+                                };
+                                // First triangle
+                                coords.push(top_left.clone());
+                                coords.push(bot_left.clone());
+                                coords.push(bot_right.clone());
+                                // Second triangle
+                                coords.push(top_left.clone());
+                                coords.push(top_right);
+                                coords.push(bot_right);
+                                colors.push(ERROR_RED);
+                                colors.push(ERROR_RED);
+                                colors.push(ERROR_RED);
+                                colors.push(ERROR_RED);
+                                colors.push(ERROR_RED);
+                                colors.push(ERROR_RED);
+                            }
+                            break;
                         }
-                        break;
+                        col += 1;
                     }
-                    col += 1;
                 }
-            }
 
-            self.diagnostics_coords = coords;
-            self.diagnostics_colors = colors;
-            self.last_clock = d.clock;
+                self.diagnostics_coords = coords;
+                self.diagnostics_colors = colors;
+                self.last_clock = d.clock;
+            }
         }
     }
 
